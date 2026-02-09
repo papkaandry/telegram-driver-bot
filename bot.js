@@ -89,20 +89,11 @@ export async function handleUpdate(update) {
       return;
     }
 
-    // ===== persistent menu actions =====
     if (text === '/start') {
       await clearState(id);
       return sendMessage(chatId, 'Menu', {
         reply_markup: mainKeyboard(id === ADMIN_ID)
       });
-    }
-
-    if (text === '🧰 Work') {
-      return sendMessage(chatId, 'Work menu coming next 👷');
-    }
-
-    if (text === '💰 Payment') {
-      return sendMessage(chatId, 'Payment menu coming next 💵');
     }
 
     if (text === '👥 Drivers' && id === ADMIN_ID) {
@@ -120,20 +111,28 @@ export async function handleUpdate(update) {
 /* ================= CALLBACK ================= */
 
 async function handleCallback(q) {
-  const id = String(q.from.id);
   const chatId = q.message.chat.id;
-  const d = q.data;
+  const data = q.data;
 
-  await clearState(id);
+  if (data.startsWith('rates_')) {
+    const uid = data.split('_')[1];
+    await setState(ADMIN_ID, 'EDIT_LOCAL', uid);
+    return sendMessage(chatId, `✏️ Editing rates for ${uid}\nEnter LOCAL rate ($/hour)`);
+  }
 
-  if (d.startsWith('approve_')) {
-    const uid = d.split('_')[1];
+  if (data.startsWith('addwork_')) {
+    const uid = data.split('_')[1];
+    return sendMessage(chatId, `➕ Add work for driver ${uid}\n(следующий шаг)`); // заглушка
+  }
+
+  if (data.startsWith('approve_')) {
+    const uid = data.split('_')[1];
     await setState(ADMIN_ID, 'SET_LOCAL', uid);
     return sendMessage(chatId, 'Enter LOCAL rate ($/hour)');
   }
 
-  if (d.startsWith('reject_')) {
-    await setDriverStatus(d.split('_')[1], 'rejected');
+  if (data.startsWith('reject_')) {
+    await setDriverStatus(data.split('_')[1], 'rejected');
     return sendMessage(chatId, '❌ Rejected');
   }
 }
@@ -148,6 +147,7 @@ async function showDrivers(chatId) {
   }
 
   let msg = '🚛 Drivers list\n\n';
+  const keyboard = [];
 
   drivers.forEach((d, i) => {
     msg +=
@@ -156,9 +156,18 @@ Status: ${d.status}
 Local: $${d.rate_local}/h | OTR: $${d.rate_otr} | Boise: $${d.rate_boise}
 
 `;
+
+    keyboard.push([
+      { text: `✏️ Rates: ${d.full_name || d.telegram_id}`, callback_data: `rates_${d.telegram_id}` },
+      { text: `➕ Add work`, callback_data: `addwork_${d.telegram_id}` }
+    ]);
   });
 
-  await sendMessage(chatId, msg);
+  await sendMessage(chatId, msg, {
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
 }
 
 /* ================= USER INPUT ================= */
@@ -169,12 +178,31 @@ async function handleUserInput(chatId, id, text) {
   }
 }
 
-/* ================= ADMIN ================= */
+/* ================= ADMIN RATES EDIT ================= */
 
 async function adminRates(chatId, text) {
   const st = await getState(ADMIN_ID);
   const uid = await getTemp(ADMIN_ID);
 
+  if (st === 'EDIT_LOCAL') {
+    await updateDriver(uid, 4, Number(text));
+    await setState(ADMIN_ID, 'EDIT_OTR', uid);
+    return sendMessage(chatId, 'Enter OTR rate ($/mile)');
+  }
+
+  if (st === 'EDIT_OTR') {
+    await updateDriver(uid, 5, Number(text));
+    await setState(ADMIN_ID, 'EDIT_BOISE', uid);
+    return sendMessage(chatId, 'Enter Boise rate');
+  }
+
+  if (st === 'EDIT_BOISE') {
+    await updateDriver(uid, 6, Number(text));
+    await clearState(ADMIN_ID);
+    return sendMessage(chatId, '✅ Rates updated');
+  }
+
+  // старый approve flow
   if (st === 'SET_LOCAL') {
     await updateDriver(uid, 4, Number(text));
     await setState(ADMIN_ID, 'SET_OTR', uid);
