@@ -1,29 +1,26 @@
-import fetch from 'node-fetch';
+import express from 'express';
+import bodyParser from 'body-parser';
 import { handleUpdate } from './bot.js';
-import './db.js';
+import { migrate } from './db.js';
 
-let offset = 0;
+const app = express();
+app.use(bodyParser.json());
 
-console.log('🤖 Bot started');
+const PORT = process.env.PORT || 3000;
 
-setInterval(async () => {
-  try {
-    const res = await fetch(
-      `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${offset}&timeout=30`
-    );
+// Telegram webhook
+app.post('/', async (req, res) => {
+  await handleUpdate(req.body);
+  res.send('OK');
+});
 
-    const data = await res.json();
+// Health check
+app.get('/', (req, res) => {
+  res.send('Bot is running');
+});
 
-    // ✅ ГЛАВНАЯ ЗАЩИТА
-    if (!data.ok || !Array.isArray(data.result)) {
-      return;
-    }
-
-    for (const u of data.result) {
-      offset = u.update_id + 1;
-      await handleUpdate(u);
-    }
-  } catch (err) {
-    console.error('Polling error:', err.message);
-  }
-}, 1500);
+// Start server + migrate DB
+app.listen(PORT, async () => {
+  await migrate();
+  console.log('🤖 Bot started');
+});
