@@ -39,13 +39,8 @@ async function answerCallback(id) {
 function mainKeyboard(isAdmin) {
   return {
     keyboard: isAdmin
-      ? [
-          ['🧰 Work', '💰 Payment'],
-          ['👥 Drivers']
-        ]
-      : [
-          ['🧰 Work', '💰 Payment']
-        ],
+      ? [['🧰 Work', '💰 Payment'], ['👥 Drivers']]
+      : [['🧰 Work', '💰 Payment']],
     resize_keyboard: true,
     persistent: true
   };
@@ -126,11 +121,11 @@ async function handleCallback(q) {
   const chatId = q.message.chat.id;
   const data = q.data;
 
-  // ---- add work flow ----
+  // ---- start add work ----
   if (data.startsWith('addwork_')) {
     const uid = data.split('_')[1];
     await setState(ADMIN_ID, 'ADD_DATE', uid);
-    return sendMessage(chatId, `➕ Add work\nEnter date (YYYY-MM-DD)`);
+    return sendMessage(chatId, '➕ Add work\nEnter date (YYYY-MM-DD)');
   }
 
   if (data === 'aw_back') {
@@ -138,21 +133,37 @@ async function handleCallback(q) {
     return showDrivers(chatId);
   }
 
+  // ---- choose work type ----
   if (data.startsWith('aw_')) {
-    const st = await getState(ADMIN_ID);
-    if (st !== 'ADD_TYPE') return;
+    const current = await getState(ADMIN_ID);
+    if (current !== 'ADD_TYPE') return;
 
     const temp = await getTemp(ADMIN_ID); // driver|date
-    await setState(ADMIN_ID, data.toUpperCase(), temp);
+    const nextState = data.toUpperCase(); // AW_LOCAL etc
+
+    await setState(ADMIN_ID, nextState, temp);
+
+    if (nextState === 'AW_LOCAL') {
+      return sendMessage(chatId, 'Enter time (22:00-05:00)');
+    }
+
+    if (nextState === 'AW_BOISE_CUSTOM') {
+      return sendMessage(chatId, 'Enter Boise amount');
+    }
+
+    if (nextState === 'AW_BOISE') {
+      const [driver, date] = temp.split('|');
+      const rate = await getRate(driver, 6);
+      await addLog(driver, { boise: rate }, date);
+      await clearState(ADMIN_ID);
+      return sendMessage(chatId, '✅ Boise added');
+    }
+
+    // OTR будет следующим шагом
+    return sendMessage(chatId, 'Next step coming…');
   }
 
-  // ---- approve / rates ----
-  if (data.startsWith('rates_')) {
-    const uid = data.split('_')[1];
-    await setState(ADMIN_ID, 'EDIT_LOCAL', uid);
-    return sendMessage(chatId, `✏️ Editing rates for ${uid}\nEnter LOCAL rate ($/hour)`);
-  }
-
+  // ---- approve / reject ----
   if (data.startsWith('approve_')) {
     const uid = data.split('_')[1];
     await setState(ADMIN_ID, 'SET_LOCAL', uid);
@@ -183,8 +194,8 @@ Local: $${d.rate_local}/h | OTR: $${d.rate_otr} | Boise: $${d.rate_boise}
 `;
 
     keyboard.push([
-      { text: `✏️ Rates`, callback_data: `rates_${d.telegram_id}` },
-      { text: `➕ Add work`, callback_data: `addwork_${d.telegram_id}` }
+      { text: '✏️ Rates', callback_data: `rates_${d.telegram_id}` },
+      { text: '➕ Add work', callback_data: `addwork_${d.telegram_id}` }
     ]);
   });
 
@@ -201,7 +212,6 @@ async function handleUserInput(chatId, id, text) {
   const st = await getState(ADMIN_ID);
   const temp = await getTemp(ADMIN_ID);
 
-  // ---- add work ----
   if (st === 'ADD_DATE') {
     await setState(ADMIN_ID, 'ADD_TYPE', `${temp}|${text}`);
     return sendMessage(chatId, 'Select work type', {
@@ -224,7 +234,6 @@ async function handleUserInput(chatId, id, text) {
     return sendMessage(chatId, '✅ Boise added');
   }
 
-  // ---- rates ----
   await adminRates(chatId, text);
 }
 
@@ -234,22 +243,23 @@ async function adminRates(chatId, text) {
   const st = await getState(ADMIN_ID);
   const uid = await getTemp(ADMIN_ID);
 
-  if (st === 'EDIT_LOCAL') {
+  if (st === 'SET_LOCAL') {
     await updateDriver(uid, 4, Number(text));
-    await setState(ADMIN_ID, 'EDIT_OTR', uid);
+    await setState(ADMIN_ID, 'SET_OTR', uid);
     return sendMessage(chatId, 'Enter OTR rate ($/mile)');
   }
 
-  if (st === 'EDIT_OTR') {
+  if (st === 'SET_OTR') {
     await updateDriver(uid, 5, Number(text));
-    await setState(ADMIN_ID, 'EDIT_BOISE', uid);
+    await setState(ADMIN_ID, 'SET_BOISE', uid);
     return sendMessage(chatId, 'Enter Boise rate');
   }
 
-  if (st === 'EDIT_BOISE') {
+  if (st === 'SET_BOISE') {
     await updateDriver(uid, 6, Number(text));
+    await updateDriver(uid, 7, 'yes');
     await clearState(ADMIN_ID);
-    return sendMessage(chatId, '✅ Rates updated');
+    return sendMessage(chatId, '✅ Driver approved');
   }
 }
 
