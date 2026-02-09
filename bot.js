@@ -9,7 +9,8 @@ import {
   updateDriver,
   setDriverStatus,
   getRate,
-  addLog
+  addLog,
+  listDrivers
 } from './db.js';
 
 const ADMIN_ID = String(process.env.ADMIN_ID);
@@ -112,6 +113,10 @@ async function handleCallback(q) {
 
   await clearState(id);
 
+  if (d === 'drivers' && id === ADMIN_ID) {
+    return showDrivers(chatId);
+  }
+
   if (d.startsWith('approve_')) {
     const uid = d.split('_')[1];
     await setState(ADMIN_ID, 'SET_LOCAL', uid);
@@ -122,6 +127,29 @@ async function handleCallback(q) {
     await setDriverStatus(d.split('_')[1], 'rejected');
     return sendMessage(chatId, '❌ Rejected');
   }
+}
+
+/* ================= DRIVERS LIST ================= */
+
+async function showDrivers(chatId) {
+  const drivers = await listDrivers();
+
+  if (!drivers.length) {
+    return sendMessage(chatId, 'No drivers found');
+  }
+
+  let msg = '🚛 Drivers list\n\n';
+
+  drivers.forEach((d, i) => {
+    msg +=
+`${i + 1}) ${d.full_name || '—'} (@${d.username || '—'})
+Status: ${d.status}
+Local: $${d.rate_local}/h | OTR: $${d.rate_otr} | Boise: $${d.rate_boise}
+
+`;
+  });
+
+  await sendMessage(chatId, msg);
 }
 
 /* ================= USER INPUT ================= */
