@@ -34,6 +34,23 @@ async function answerCallback(id) {
   await tg('answerCallbackQuery', { callback_query_id: id });
 }
 
+/* ================= KEYBOARDS ================= */
+
+function mainKeyboard(isAdmin) {
+  return {
+    keyboard: isAdmin
+      ? [
+          ['🧰 Work', '💰 Payment'],
+          ['👥 Drivers']
+        ]
+      : [
+          ['🧰 Work', '💰 Payment']
+        ],
+    resize_keyboard: true,
+    persistent: true
+  };
+}
+
 /* ================= UPDATE ================= */
 
 export async function handleUpdate(update) {
@@ -72,9 +89,24 @@ export async function handleUpdate(update) {
       return;
     }
 
+    // ===== persistent menu actions =====
     if (text === '/start') {
       await clearState(id);
-      return sendRootMenu(chatId, id);
+      return sendMessage(chatId, 'Menu', {
+        reply_markup: mainKeyboard(id === ADMIN_ID)
+      });
+    }
+
+    if (text === '🧰 Work') {
+      return sendMessage(chatId, 'Work menu coming next 👷');
+    }
+
+    if (text === '💰 Payment') {
+      return sendMessage(chatId, 'Payment menu coming next 💵');
+    }
+
+    if (text === '👥 Drivers' && id === ADMIN_ID) {
+      return showDrivers(chatId);
     }
 
     await handleUserInput(chatId, id, text);
@@ -85,25 +117,6 @@ export async function handleUpdate(update) {
   }
 }
 
-/* ================= MENUS ================= */
-
-async function sendRootMenu(chatId, id) {
-  await sendMessage(chatId, id === ADMIN_ID ? '👮 Admin menu' : 'Menu', {
-    reply_markup: {
-      inline_keyboard: id === ADMIN_ID
-        ? [
-            [{ text: '🧰 Work', callback_data: 'work' }],
-            [{ text: '💰 Payment', callback_data: 'payment' }],
-            [{ text: '👥 Drivers', callback_data: 'drivers' }]
-          ]
-        : [
-            [{ text: '🧰 Work', callback_data: 'work' }],
-            [{ text: '💰 Payment', callback_data: 'payment' }]
-          ]
-    }
-  });
-}
-
 /* ================= CALLBACK ================= */
 
 async function handleCallback(q) {
@@ -112,10 +125,6 @@ async function handleCallback(q) {
   const d = q.data;
 
   await clearState(id);
-
-  if (d === 'drivers' && id === ADMIN_ID) {
-    return showDrivers(chatId);
-  }
 
   if (d.startsWith('approve_')) {
     const uid = d.split('_')[1];
