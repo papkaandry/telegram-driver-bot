@@ -1,9 +1,4 @@
-import pkg from 'pg';
-const { Pool } = pkg;
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+import { pool } from './db.js';
 
 export async function migrate() {
   await pool.query(`
@@ -23,5 +18,5 @@ export async function migrate() {
     );
   `);
 
-  console.log('✅ Database migrated');
+  console.log('✅ Database migrated (drivers table ready)');
 }
