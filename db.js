@@ -6,6 +6,7 @@ export const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-pool.on('connect', () => {
-  console.log('🟢 Connected to PostgreSQL');
-});
+export async function q(text, params = []) {
+  const res = await pool.query(text, params);
+  return res.rows;
+}
