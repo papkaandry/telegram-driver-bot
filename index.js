@@ -1,20 +1,29 @@
 import fetch from 'node-fetch';
-import { migrate } from './migrate.js';
 import { handleUpdate } from './bot.js';
-
-await migrate();
+import './db.js';
 
 let offset = 0;
+
 console.log('🤖 Bot started');
 
 setInterval(async () => {
-  const res = await fetch(
-    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${offset}`
-  );
-  const data = await res.json();
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${offset}&timeout=30`
+    );
 
-  for (const u of data.result) {
-    offset = u.update_id + 1;
-    await handleUpdate(u);
+    const data = await res.json();
+
+    // ✅ ГЛАВНАЯ ЗАЩИТА
+    if (!data.ok || !Array.isArray(data.result)) {
+      return;
+    }
+
+    for (const u of data.result) {
+      offset = u.update_id + 1;
+      await handleUpdate(u);
+    }
+  } catch (err) {
+    console.error('Polling error:', err.message);
   }
 }, 1500);
