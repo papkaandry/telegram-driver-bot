@@ -1,57 +1,71 @@
-import { query } from './db.js';
+import TelegramBot from 'node-telegram-bot-api';
 
-/* ====== КНОПКИ ====== */
-const mainKeyboard = {
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: '👥 Drivers', callback_data: 'drivers' }],
-      [{ text: '🧰 Work', callback_data: 'work' }],
-      [{ text: '💰 Payment', callback_data: 'payment' }],
-    ],
-  },
-};
+const token = process.env.BOT_TOKEN;
+export const bot = new TelegramBot(token, { polling: false });
 
-/* ====== СООБЩЕНИЯ ====== */
-export async function handleMessage(bot, msg) {
-  const chatId = msg.chat.id;
+const ADMIN_ID = String(process.env.ADMIN_ID);
 
-  if (msg.text === '/start') {
-    await bot.sendMessage(chatId, 'Choose option:', mainKeyboard);
+// ===== MENUS =====
+export function sendRootMenu(chatId, userId) {
+  if (userId === ADMIN_ID) {
+    return bot.sendMessage(chatId, '👮 Admin menu', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🧰 Work', callback_data: 'work' }],
+          [{ text: '💰 Payment', callback_data: 'payment' }],
+          [{ text: '👥 Drivers', callback_data: 'drivers' }]
+        ]
+      }
+    });
   }
+
+  return bot.sendMessage(chatId, 'Menu', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🧰 Work', callback_data: 'work' }],
+        [{ text: '💰 Payment', callback_data: 'payment' }]
+      ]
+    }
+  });
 }
 
-/* ====== CALLBACK ====== */
-export async function handleCallback(bot, queryData) {
-  const chatId = queryData.message.chat.id;
-  const data = queryData.data;
+// ===== UPDATE HANDLER =====
+export async function handleUpdate(update) {
+  try {
+    if (update.message) {
+      const chatId = update.message.chat.id;
+      const userId = String(update.message.from.id);
+      const text = (update.message.text || '').trim();
 
-  console.log('CALLBACK:', data);
-
-  await bot.answerCallbackQuery(queryData.id);
-
-  if (data === 'drivers') {
-    const res = await query(`
-      SELECT name, telegram_id
-      FROM drivers
-      ORDER BY name
-    `);
-
-    if (res.rows.length === 0) {
-      return bot.sendMessage(chatId, 'No drivers found');
+      if (text === '/start') {
+        return sendRootMenu(chatId, userId);
+      }
     }
 
-    const text = res.rows
-      .map((d, i) => `${i + 1}) ${d.name} (${d.telegram_id})`)
-      .join('\n');
+    if (update.callback_query) {
+      const q = update.callback_query;
+      const chatId = q.message.chat.id;
+      const userId = String(q.from.id);
+      const data = q.data;
 
-    return bot.sendMessage(chatId, text, mainKeyboard);
-  }
+      await bot.answerCallbackQuery(q.id);
 
-  if (data === 'work') {
-    return bot.sendMessage(chatId, '🧰 Work section (next step)', mainKeyboard);
-  }
+      if (data === 'drivers') {
+        if (userId !== ADMIN_ID) {
+          return bot.sendMessage(chatId, '⛔ Access denied');
+        }
+        return bot.sendMessage(chatId, '👥 Drivers (next step)');
+      }
 
-  if (data === 'payment') {
-    return bot.sendMessage(chatId, '💰 Payment section (next step)', mainKeyboard);
+      if (data === 'work') {
+        return bot.sendMessage(chatId, '🧰 Work (next step)');
+      }
+
+      if (data === 'payment') {
+        return bot.sendMessage(chatId, '💰 Payment (next step)');
+      }
+    }
+  } catch (err) {
+    console.error('BOT ERROR', err);
   }
 }
