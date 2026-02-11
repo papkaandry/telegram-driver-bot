@@ -1,23 +1,18 @@
-import express from 'express';
-import bodyParser from 'body-parser';
+import TelegramBot from 'node-telegram-bot-api';
 import { handleUpdate } from './bot.js';
-import { migrate } from './db.js';
 
-const app = express();
-app.use(bodyParser.json());
+const token = process.env.BOT_TOKEN;
 
-const PORT = process.env.PORT || 3000;
-
-app.post('/', async (req, res) => {
-  await handleUpdate(req.body);
-  res.send('OK');
+const bot = new TelegramBot(token, {
+  polling: true
 });
 
-app.get('/', (req, res) => {
-  res.send('Bot is running');
+console.log('🤖 Bot started');
+
+bot.on('message', (msg) => {
+  handleUpdate({ message: msg }, bot);
 });
 
-app.listen(PORT, async () => {
-  await migrate();
-  console.log('🤖 Bot started');
+bot.on('callback_query', (query) => {
+  handleUpdate({ callback_query: query }, bot);
 });
