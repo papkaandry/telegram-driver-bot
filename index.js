@@ -1,21 +1,22 @@
-import TelegramBot from 'node-telegram-bot-api';
-import { handleMessage, handleCallback } from './bot.js';
+import express from 'express';
+import { bot, handleUpdate } from './bot.js';
 
-const token = process.env.BOT_TOKEN;
+const app = express();
+app.use(express.json());
 
-if (!token) {
-  console.error('❌ BOT_TOKEN is missing');
-  process.exit(1);
-}
-
-const bot = new TelegramBot(token, { polling: true });
-
-console.log('🤖 Bot started');
-
-bot.on('message', (msg) => {
-  handleMessage(bot, msg);
+app.post('/webhook', async (req, res) => {
+  await handleUpdate(req.body);
+  res.sendStatus(200);
 });
 
-bot.on('callback_query', (query) => {
-  handleCallback(bot, query);
+app.get('/', (req, res) => {
+  res.send('OK');
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, async () => {
+  const webhookUrl = `${process.env.WEBHOOK_URL}/webhook`;
+  await bot.setWebHook(webhookUrl);
+  console.log('🤖 Bot started with webhook:', webhookUrl);
 });
