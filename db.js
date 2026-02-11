@@ -1,12 +1,13 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import pg from 'pg';
 
-const pool = new Pool({
+const { Pool } = pg;
+
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }
 });
 
-export async function query(text, params) {
+export async function q(text, params = []) {
   const res = await pool.query(text, params);
-  return res;
+  return res.rows;
 }
