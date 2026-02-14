@@ -155,7 +155,7 @@ export function setupBot(bot) {
           return bot.sendMessage(msg.chat.id,"✅ Rates updated");
         }
 
-        // ---------- STATS ----------
+        // ---------- STATS (ОПТИМИЗИРОВАНО) ----------
         if (mode === "stats") {
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
@@ -163,27 +163,30 @@ export function setupBot(bot) {
             return bot.sendMessage(msg.chat.id,"❌ Use YYYY-MM-DD");
           }
 
-          const stats = await pool.query(
-            `SELECT type, COUNT(*) as count,
-                    COALESCE(SUM(amount),0) as total
-             FROM work_logs
-             WHERE telegram_id=$1
-             AND created_at > $2
-             GROUP BY type`,
-            [id, text]
-          );
-
-          const totalAll = await pool.query(
-            `SELECT COALESCE(SUM(amount),0) as total
-             FROM work_logs
-             WHERE telegram_id=$1
-             AND created_at > $2`,
+          const result = await pool.query(
+            `
+            SELECT
+                type,
+                COUNT(*) as count,
+                COALESCE(SUM(amount),0) as total
+            FROM work_logs
+            WHERE telegram_id=$1
+            AND created_at > $2
+            GROUP BY GROUPING SETS ((type), ())
+            `,
             [id, text]
           );
 
           let response = "💰 Company owes you:\n\n";
+          let totalAll = 0;
 
-          stats.rows.forEach(r => {
+          result.rows.forEach(r => {
+
+            if (r.type === null) {
+              totalAll = Number(r.total);
+              return;
+            }
+
             const emoji =
               r.type === "otr" ? "🚛" :
               r.type === "local" ? "🏙" :
@@ -197,7 +200,7 @@ Total: $${Number(r.total).toFixed(2)}
 `;
           });
 
-          response += `🧾 TOTAL ALL: $${Number(totalAll.rows[0].total).toFixed(2)}`;
+          response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
 
           if (user.email) {
             try {
@@ -293,7 +296,6 @@ Total: $${Number(r.total).toFixed(2)}
 
       const data = query.data;
 
-      // ===== DRIVERS =====
       if (data === "admin_drivers") {
 
         const { rows } = await pool.query(
@@ -319,7 +321,6 @@ ${status}`,
         }
       }
 
-      // ===== EDIT RATES BUTTON =====
       if (data.startsWith("rates_")) {
 
         const userId = data.split("_")[1];
@@ -332,7 +333,6 @@ ${status}`,
         );
       }
 
-      // ===== CLEAR CONFIRM =====
       if (data === "clear_logs_confirm") {
 
         return bot.sendMessage(query.message.chat.id,
