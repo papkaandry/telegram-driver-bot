@@ -67,6 +67,37 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
 
+    // ================= STATS BUTTON =================
+    if (text === "📊 Stats") {
+
+      const result = await pool.query(
+        `SELECT type,
+                COUNT(*) as count,
+                COALESCE(SUM(amount),0) as total
+         FROM work_logs
+         WHERE telegram_id=$1
+         GROUP BY type`,
+        [id]
+      );
+
+      let response = "📊 Your Stats:\n\n";
+      let totalAll = 0;
+
+      result.rows.forEach(r => {
+        const amount = Number(r.total) || 0;
+        totalAll += amount;
+        response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
+      });
+
+      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+
+      return bot.sendMessage(msg.chat.id, response);
+    }
+
     // ADMIN MENU
     if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
       return bot.sendMessage(msg.chat.id,"Admin Panel:",{
@@ -80,16 +111,7 @@ export function setupBot(bot) {
       });
     }
 
-    // ================== FIXED STATS BUTTON ==================
-    if (text === "📊 Stats") {
-
-      waitingInput[id] = "stats_date";
-      return bot.sendMessage(msg.chat.id,
-        "Enter last paid date YYYY-MM-DD");
-    }
-
-    // =========================================================
-
+    // ===== WORK BUTTONS =====
     const { rows } = await pool.query(
       `SELECT approved, otr_rate, local_rate, boise_rate
        FROM users WHERE telegram_id=$1`,
@@ -107,7 +129,7 @@ export function setupBot(bot) {
 
       if (text === "🏙 Local") {
         waitingInput[id] = "local";
-        return bot.sendMessage(msg.chat.id,"Enter hours (10 or 10:30):");
+        return bot.sendMessage(msg.chat.id,"Enter hours:");
       }
 
       if (text === "📍 Boise") {
@@ -128,41 +150,16 @@ export function setupBot(bot) {
       }
     }
 
+    // ===== WAITING INPUT =====
     if (waitingInput[id]) {
 
       const mode = waitingInput[id];
       delete waitingInput[id];
 
-      // ================= FIXED LOCAL PARSER =================
-      if (mode === "local") {
-
-        let hours = 0;
-
-        if (text.includes(":")) {
-          const [h, m] = text.split(":").map(Number);
-          hours = h + (m || 0) / 60;
-        } else {
-          hours = Number(text);
-        }
-
-        const rate = rows[0].local_rate || 0;
-        const amount = Number((hours * rate).toFixed(2));
-
-        await pool.query(
-          `INSERT INTO work_logs (telegram_id,type,value,amount)
-           VALUES ($1,'local',$2,$3)`,
-          [id, hours, amount]
-        );
-
-        return bot.sendMessage(msg.chat.id,`🏙 Saved: $${amount}`);
-      }
-
-      // =======================================================
-
       if (mode === "otr") {
-        const miles = Number(text);
-        const rate = rows[0].otr_rate || 0;
-        const amount = Number((miles * rate).toFixed(2));
+        const miles = Number(text) || 0;
+        const rate = Number(rows[0]?.otr_rate) || 0;
+        const amount = Number((miles * rate).toFixed(2)) || 0;
 
         await pool.query(
           `INSERT INTO work_logs (telegram_id,type,value,amount)
@@ -170,11 +167,36 @@ export function setupBot(bot) {
           [id, miles, amount]
         );
 
-        return bot.sendMessage(msg.chat.id,`🚛 Saved: $${amount}`);
+        return bot.sendMessage(msg.chat.id,`🚛 Saved: $${amount.toFixed(2)}`);
+      }
+
+      if (mode === "local") {
+
+        let hours;
+
+        if (text.includes(":")) {
+          const parts = text.split(":");
+          hours = Number(parts[0]) + Number(parts[1]) / 60;
+        } else {
+          hours = Number(text);
+        }
+
+        if (isNaN(hours)) hours = 0;
+
+        const rate = Number(rows[0]?.local_rate) || 0;
+        const amount = Number((hours * rate).toFixed(2)) || 0;
+
+        await pool.query(
+          `INSERT INTO work_logs (telegram_id,type,value,amount)
+           VALUES ($1,'local',$2,$3)`,
+          [id, hours, amount]
+        );
+
+        return bot.sendMessage(msg.chat.id,`🏙 Saved: $${amount.toFixed(2)}`);
       }
 
       if (mode === "boise_custom") {
-        const amount = Number(text).toFixed(2);
+        const amount = Number(text) || 0;
 
         await pool.query(
           `INSERT INTO work_logs (telegram_id,type,value,amount)
@@ -182,37 +204,54 @@ export function setupBot(bot) {
           [id, amount]
         );
 
-        return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount}`);
+        return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount.toFixed(2)}`);
       }
 
-      // ================== FIXED STATS LOGIC ==================
-      if (mode === "stats_date") {
+      if (mode === "edit_rates") {
+        const [otr, local, boise] = text.split(" ").map(Number);
+        const driverId = editTarget[id];
 
-        const result = await pool.query(
-          `SELECT type, COUNT(*) as count,
-                  COALESCE(SUM(amount),0) as total
-           FROM work_logs
-           WHERE telegram_id=$1
-           AND created_at > $2
-           GROUP BY type`,
-          [id, text]
+        await pool.query(
+          `UPDATE users
+           SET otr_rate=$1, local_rate=$2, boise_rate=$3
+           WHERE telegram_id=$4`,
+          [otr || 0, local || 0, boise || 0, driverId]
         );
 
-        let response = "📊 Your Stats:\n\n";
-        let totalAll = 0;
-
-        result.rows.forEach(r=>{
-          const amount = Number(r.total);
-          totalAll += amount;
-          response += `${r.type}\nCount: ${r.count}\nTotal: $${amount.toFixed(2)}\n\n`;
-        });
-
-        response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
-
-        return bot.sendMessage(msg.chat.id,response);
+        delete editTarget[id];
+        return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
       }
 
-      // =======================================================
+      if (mode === "admin_add_value") {
+        adminState[id].value = Number(text) || 0;
+        waitingInput[id] = "admin_add_date";
+        return bot.sendMessage(msg.chat.id,"Enter date YYYY-MM-DD");
+      }
+
+      if (mode === "admin_add_date") {
+        const s = adminState[id];
+
+        await pool.query(
+          `INSERT INTO work_logs (telegram_id,type,value,amount,created_at)
+           VALUES ($1,$2,$3,$3,$4)`,
+          [s.driverId, s.type, s.value, text]
+        );
+
+        delete adminState[id];
+        return bot.sendMessage(msg.chat.id,"✅ Work added.");
+      }
+
+      if (mode === "delete_by_date") {
+        const [from, to] = text.split(" ");
+        await pool.query(
+          `DELETE FROM work_logs
+           WHERE telegram_id=$1
+           AND created_at BETWEEN $2 AND $3`,
+          [deleteState[id], from, to]
+        );
+        delete deleteState[id];
+        return bot.sendMessage(msg.chat.id,"🗑 Logs deleted by date.");
+      }
     }
 
   });
@@ -225,13 +264,14 @@ export function setupBot(bot) {
 
     if (id !== ADMIN_ID) return;
 
-    // ================= FIXED ADMIN VIEW STATS =================
+    // ================= ADMIN VIEW STATS =================
     if (data.startsWith("view_")) {
 
       const driverId = data.split("_")[1];
 
       const result = await pool.query(
-        `SELECT type, COUNT(*) as count,
+        `SELECT type,
+                COUNT(*) as count,
                 COALESCE(SUM(amount),0) as total
          FROM work_logs
          WHERE telegram_id=$1
@@ -243,19 +283,21 @@ export function setupBot(bot) {
       let totalAll = 0;
 
       result.rows.forEach(r=>{
-        const amount = Number(r.total);
+        const amount = Number(r.total) || 0;
         totalAll += amount;
-        response += `${r.type}\nCount: ${r.count}\nTotal: $${amount.toFixed(2)}\n\n`;
+        response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
       });
 
-      response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
+      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
 
       return bot.sendMessage(query.message.chat.id,response);
     }
 
-    // =========================================================
-
-    // остальные твои callback остаются без изменений
+    // ================= END =================
   });
 
 }
