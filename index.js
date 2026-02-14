@@ -11,7 +11,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
   }
 });
 
-// ===== ERROR HANDLER (чтобы не падал процесс) =====
+// ===== ERROR HANDLER =====
 bot.on('polling_error', (error) => {
   console.error('Polling error:', error.message);
 });
@@ -39,7 +39,6 @@ cron.schedule('0 20 * * 0', async () => {
 
     const now = new Date();
 
-    // прошлый понедельник
     const lastMonday = new Date(now);
     lastMonday.setDate(now.getDate() - ((now.getDay() + 6) % 7) - 7);
 
@@ -51,48 +50,80 @@ cron.schedule('0 20 * * 0', async () => {
 
     console.log("Period:", from, to);
 
-    const { rows: users } = await pool.query(
-      `SELECT telegram_id, email, name
-       FROM users
-       WHERE approved = true AND email IS NOT NULL`
+    // 🔥 ОДИН SQL ВМЕСТО 50
+    const { rows } = await pool.query(
+      `
+      SELECT 
+          u.telegram_id,
+          u.email,
+          u.name,
+          w.type,
+          COALESCE(SUM(w.amount),0) as total
+      FROM users u
+      LEFT JOIN work_logs w
+          ON u.telegram_id = w.telegram_id
+          AND w.created_at BETWEEN $1 AND $2
+      WHERE u.approved = true
+        AND u.email IS NOT NULL
+      GROUP BY u.telegram_id, u.email, u.name, w.type
+      ORDER BY u.telegram_id
+      `,
+      [from, to]
     );
 
-    for (const user of users) {
+    if (!rows.length) {
+      console.log("No weekly data");
+      return;
+    }
 
-      const { rows: logs } = await pool.query(
-        `SELECT type,
-                COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id = $1
-         AND created_at BETWEEN $2 AND $3
-         GROUP BY type`,
-        [user.telegram_id, from, to]
-      );
+    // группируем по пользователям
+    const grouped = {};
 
-      if (!logs.length) continue;
+    rows.forEach(r => {
+
+      if (!grouped[r.telegram_id]) {
+        grouped[r.telegram_id] = {
+          email: r.email,
+          name: r.name,
+          logs: []
+        };
+      }
+
+      if (r.type) {
+        grouped[r.telegram_id].logs.push({
+          type: r.type,
+          total: Number(r.total)
+        });
+      }
+    });
+
+    // отправляем уведомления
+    for (const telegramId in grouped) {
+
+      const user = grouped[telegramId];
+
+      if (!user.logs.length) continue;
 
       let text = `📊 Weekly Report (${from} - ${to})\n\n`;
       let totalAll = 0;
 
-      logs.forEach(r => {
-        const total = Number(r.total);
-        totalAll += total;
-        text += `${r.type}: $${total.toFixed(2)}\n`;
+      user.logs.forEach(l => {
+        totalAll += l.total;
+        text += `${l.type}: $${l.total.toFixed(2)}\n`;
       });
 
       text += `\n🧾 TOTAL: $${totalAll.toFixed(2)}`;
 
       try {
         await bot.sendMessage(
-          user.telegram_id,
+          telegramId,
           "📬 Weekly report is ready. Check your email."
         );
       } catch (e) {
         console.log("Telegram send error:", e.message);
       }
 
-      // email отправляет bot.js через sendMail
-      // тут просто оставляем расчёт
+      // email отправляется в bot.js
     }
 
     console.log("Weekly report finished");
@@ -105,7 +136,7 @@ cron.schedule('0 20 * * 0', async () => {
   timezone: "America/Los_Angeles"
 });
 
-// ===== GRACEFUL SHUTDOWN (Railway не будет убивать процесс) =====
+// ===== GRACEFUL SHUTDOWN =====
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Closing...');
   await pool.end();
