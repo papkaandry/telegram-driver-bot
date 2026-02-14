@@ -3,12 +3,36 @@ import { sendMail } from './mail.js';
 
 const ADMIN_ID = "427968134";
 
+function mainKeyboard(isAdmin = false) {
+  if (isAdmin) {
+    return {
+      keyboard: [
+        [{ text: "🛠 Admin Menu" }],
+        [{ text: "🚛 OTR" }],
+        [{ text: "🏙 Local" }],
+        [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+        [{ text: "📊 Stats" }, { text: "📧 Send Email Report" }]
+      ],
+      resize_keyboard: true
+    };
+  }
+
+  return {
+    keyboard: [
+      [{ text: "🚛 OTR" }],
+      [{ text: "🏙 Local" }],
+      [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+      [{ text: "📊 Stats" }, { text: "📧 Send Email Report" }]
+    ],
+    resize_keyboard: true
+  };
+}
+
 export function setupBot(bot) {
 
-  const pendingConfirmations = {};
-
-  // ===== START =====
+  // ================= START =================
   bot.onText(/\/start/, async (msg) => {
+
     const id = msg.from.id.toString();
     const name = msg.from.first_name;
 
@@ -21,15 +45,7 @@ export function setupBot(bot) {
 
     if (id === ADMIN_ID) {
       return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
-        reply_markup: {
-          keyboard: [
-            [{ text: "🛠 Admin Menu" }],
-            [{ text: "🚛 OTR" }, { text: "🏙 Local" }],
-            [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-            [{ text: "💰 Stats" }]
-          ],
-          resize_keyboard: true
-        }
+        reply_markup: mainKeyboard(true)
       });
     }
 
@@ -39,27 +55,37 @@ export function setupBot(bot) {
     );
 
     if (!rows[0]?.approved) {
-      return bot.sendMessage(msg.chat.id, "⏳ Waiting for admin approval.");
+      return bot.sendMessage(msg.chat.id,
+        "⏳ Waiting for admin approval."
+      );
     }
 
     bot.sendMessage(msg.chat.id, "Driver Panel", {
-      reply_markup: {
-        keyboard: [
-          [{ text: "🚛 OTR" }],
-          [{ text: "🏙 Local" }],
-          [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-          [{ text: "💰 Debt" }, { text: "📩 Send Email Report" }]
-        ],
-        resize_keyboard: true
-      }
+      reply_markup: mainKeyboard(false)
     });
   });
 
-  // ===== MESSAGE HANDLER =====
+  // ================= MESSAGE HANDLER =================
   bot.on('message', async (msg) => {
 
     const id = msg.from.id.toString();
     const text = msg.text;
+
+    if (!text) return;
+
+    // ADMIN MENU
+    if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
+      return bot.sendMessage(msg.chat.id,
+        "Admin Panel:",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
+            ]
+          }
+        }
+      );
+    }
 
     const { rows } = await pool.query(
       `SELECT approved, otr_rate, local_rate, boise_rate, email
@@ -67,188 +93,175 @@ export function setupBot(bot) {
       [id]
     );
 
-    if (!rows.length) return;
+    if (!rows[0]) return;
+    if (id !== ADMIN_ID && !rows[0].approved) return;
 
     const user = rows[0];
 
-    // ===== CONFIRMATION =====
-    if (pendingConfirmations[id] && text === "✅ Confirm") {
-
-      const data = pendingConfirmations[id];
-
-      await pool.query(
-        `INSERT INTO work_logs (telegram_id,type,value,amount)
-         VALUES ($1,$2,$3,$4)`,
-        [id, data.type, data.value, data.amount]
-      );
-
-      delete pendingConfirmations[id];
-
-      return bot.sendMessage(msg.chat.id, `✅ Saved: $${data.amount}`);
-    }
-
-    if (text === "❌ Cancel" && pendingConfirmations[id]) {
-      delete pendingConfirmations[id];
-      return bot.sendMessage(msg.chat.id, "❌ Cancelled.");
-    }
-
-    // ===== DRIVER LOGIC =====
+    // ========== OTR ==========
     if (text === "🚛 OTR") {
-      return bot.sendMessage(msg.chat.id, "Enter miles:");
-    }
 
-    if (!isNaN(text) && pendingConfirmations[id] === undefined) {
+      bot.sendMessage(msg.chat.id, "Enter miles:");
 
-      // OTR flow
-      if (msg.reply_to_message?.text === "Enter miles:") {
-        const miles = Number(text);
+      bot.once('message', async (m) => {
+        if (m.from.id.toString() !== id) return;
+
+        const miles = Number(m.text);
         const amount = miles * user.otr_rate;
 
-        pendingConfirmations[id] = {
-          type: 'otr',
-          value: miles,
-          amount
-        };
-
-        return bot.sendMessage(msg.chat.id,
-          `🚛 OTR\nMiles: ${miles}\nRate: ${user.otr_rate}\nAmount: $${amount}\n\nConfirm?`,
+        bot.sendMessage(msg.chat.id,
+          `🚛 OTR\nMiles: ${miles}\nRate: ${user.otr_rate}\nTotal: $${amount}\n\nConfirm?`,
           {
             reply_markup: {
-              keyboard: [[{ text: "✅ Confirm" }, { text: "❌ Cancel" }]],
-              resize_keyboard: true
+              inline_keyboard: [
+                [
+                  { text: "✅ Confirm", callback_data: `confirm_otr_${miles}_${amount}` },
+                  { text: "❌ Cancel", callback_data: "cancel" }
+                ]
+              ]
             }
           }
         );
-      }
+      });
     }
 
+    // ========== LOCAL ==========
     if (text === "🏙 Local") {
-      return bot.sendMessage(msg.chat.id, "Enter hours:");
-    }
 
-    if (!isNaN(text) && msg.reply_to_message?.text === "Enter hours:") {
+      bot.sendMessage(msg.chat.id, "Enter hours:");
 
-      const hours = Number(text);
-      const amount = hours * user.local_rate;
+      bot.once('message', async (m) => {
+        if (m.from.id.toString() !== id) return;
 
-      pendingConfirmations[id] = {
-        type: 'local',
-        value: hours,
-        amount
-      };
+        const hours = Number(m.text);
+        const amount = hours * user.local_rate;
 
-      return bot.sendMessage(msg.chat.id,
-        `🏙 Local\nHours: ${hours}\nRate: ${user.local_rate}\nAmount: $${amount}\n\nConfirm?`,
-        {
-          reply_markup: {
-            keyboard: [[{ text: "✅ Confirm" }, { text: "❌ Cancel" }]],
-            resize_keyboard: true
+        bot.sendMessage(msg.chat.id,
+          `🏙 Local\nHours: ${hours}\nRate: ${user.local_rate}\nTotal: $${amount}\n\nConfirm?`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "✅ Confirm", callback_data: `confirm_local_${hours}_${amount}` },
+                  { text: "❌ Cancel", callback_data: "cancel" }
+                ]
+              ]
+            }
           }
-        }
-      );
+        );
+      });
     }
 
+    // ========== BOISE ==========
     if (text === "📍 Boise") {
 
-      const amount = user.boise_rate;
-
-      pendingConfirmations[id] = {
-        type: 'boise',
-        value: 1,
-        amount
-      };
-
-      return bot.sendMessage(msg.chat.id,
-        `📍 Boise\nRate: ${amount}\n\nConfirm?`,
+      bot.sendMessage(msg.chat.id,
+        `📍 Boise\nRate: $${user.boise_rate}\n\nConfirm?`,
         {
           reply_markup: {
-            keyboard: [[{ text: "✅ Confirm" }, { text: "❌ Cancel" }]],
-            resize_keyboard: true
+            inline_keyboard: [
+              [
+                { text: "✅ Confirm", callback_data: `confirm_boise_1_${user.boise_rate}` },
+                { text: "❌ Cancel", callback_data: "cancel" }
+              ]
+            ]
           }
         }
       );
     }
 
+    // ========== BOISE CUSTOM ==========
     if (text === "📍 Boise Custom") {
-      return bot.sendMessage(msg.chat.id, "Enter custom amount:");
-    }
 
-    if (!isNaN(text) && msg.reply_to_message?.text === "Enter custom amount:") {
+      bot.sendMessage(msg.chat.id, "Enter custom amount:");
 
-      const amount = Number(text);
+      bot.once('message', async (m) => {
+        if (m.from.id.toString() !== id) return;
 
-      pendingConfirmations[id] = {
-        type: 'boise_custom',
-        value: 1,
-        amount
-      };
+        const amount = Number(m.text);
 
-      return bot.sendMessage(msg.chat.id,
-        `📍 Boise Custom\nAmount: $${amount}\n\nConfirm?`,
-        {
-          reply_markup: {
-            keyboard: [[{ text: "✅ Confirm" }, { text: "❌ Cancel" }]],
-            resize_keyboard: true
+        bot.sendMessage(msg.chat.id,
+          `📍 Boise Custom\nAmount: $${amount}\n\nConfirm?`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "✅ Confirm", callback_data: `confirm_boise_custom_1_${amount}` },
+                  { text: "❌ Cancel", callback_data: "cancel" }
+                ]
+              ]
+            }
           }
-        }
-      );
-    }
-
-    // ===== DEBT =====
-    if (text === "💰 Debt" || text === "💰 Stats") {
-
-      return bot.sendMessage(msg.chat.id,
-        "Enter last paid period end date (YYYY-MM-DD)"
-      );
-    }
-
-    if (text.match(/^\d{4}-\d{2}-\d{2}$/)) {
-
-      const { rows: logs } = await pool.query(
-        `SELECT type, SUM(amount) as total
-         FROM work_logs
-         WHERE telegram_id=$1 AND created_at > $2
-         GROUP BY type`,
-        [id, text]
-      );
-
-      let response = "💰 Company owes you:\n\n";
-
-      logs.forEach(r => {
-        if (r.type === 'otr') response += `🚛 OTR: $${r.total}\n`;
-        if (r.type === 'local') response += `🏙 Local: $${r.total}\n`;
-        if (r.type === 'boise') response += `📍 Boise: $${r.total}\n`;
-        if (r.type === 'boise_custom') response += `📍 Boise Custom: $${r.total}\n`;
+        );
       });
-
-      return bot.sendMessage(msg.chat.id, response);
     }
 
-    // ===== SEND EMAIL REPORT =====
-    if (text === "📩 Send Email Report") {
+    // ========== SEND EMAIL ==========
+    if (text === "📧 Send Email Report") {
 
       if (!user.email) {
         return bot.sendMessage(msg.chat.id, "No email saved.");
       }
 
-      const { rows: logs } = await pool.query(
-        `SELECT type, SUM(amount) as total
+      const { rows } = await pool.query(
+        `SELECT type, COUNT(*) as count, SUM(amount) as total
          FROM work_logs
          WHERE telegram_id=$1
          GROUP BY type`,
         [id]
       );
 
-      let report = "Full Report:\n\n";
+      let report = "📊 Work Report\n\n";
 
-      logs.forEach(r => {
-        report += `${r.type}: $${r.total}\n`;
+      rows.forEach(r => {
+        let label = r.type;
+        if (r.type === "otr") label = "🚛 OTR";
+        if (r.type === "local") label = "🏙 Local";
+        if (r.type === "boise") label = "📍 Boise";
+        if (r.type === "boise_custom") label = "📍 Boise Custom";
+
+        report += `${label}\nCount: ${r.count}\nTotal: $${r.total}\n\n`;
       });
 
-      await sendMail(user.email, "Your Report", report);
+      await sendMail(user.email, "Work Report", report);
       await sendMail("work.papkaandry@gmail.com", "Driver Copy", report);
 
-      return bot.sendMessage(msg.chat.id, "📬 Report sent to email.");
+      bot.sendMessage(msg.chat.id, "📬 Report sent to email.");
     }
+
+  });
+
+  // ================= CALLBACKS =================
+  bot.on('callback_query', async (query) => {
+
+    const id = query.from.id.toString();
+    const data = query.data;
+
+    if (data === "cancel") {
+      bot.sendMessage(query.message.chat.id, "❌ Cancelled", {
+        reply_markup: mainKeyboard(id === ADMIN_ID)
+      });
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith("confirm_")) {
+
+      const parts = data.split("_");
+      const type = parts[1];
+      const value = parts[2];
+      const amount = parts[3];
+
+      await pool.query(
+        `INSERT INTO work_logs (telegram_id,type,value,amount)
+         VALUES ($1,$2,$3,$4)`,
+        [id, type, value, amount]
+      );
+
+      bot.sendMessage(query.message.chat.id, "✅ Saved", {
+        reply_markup: mainKeyboard(id === ADMIN_ID)
+      });
+    }
+
+    bot.answerCallbackQuery(query.id);
   });
 }
