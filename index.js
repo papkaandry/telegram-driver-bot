@@ -12,24 +12,26 @@ setupBot(bot);
 
 console.log('Bot started');
 
-// ===== WEEKLY REPORT =====
+// ===== WEEKLY REPORT (Every Sunday 20:00) =====
 cron.schedule('0 20 * * 0', async () => {
+
   console.log("Weekly report started");
 
   try {
-    const today = new Date();
 
-    const day = today.getDay();
-    const diffToMonday = (day === 0 ? -6 : 1 - day) - 7;
+    const now = new Date();
 
-    const monday = new Date(today);
-    monday.setDate(today.getDate() + diffToMonday);
+    // Получаем прошлый понедельник
+    const lastMonday = new Date(now);
+    lastMonday.setDate(now.getDate() - ((now.getDay() + 6) % 7) - 7);
 
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
+    const lastSunday = new Date(lastMonday);
+    lastSunday.setDate(lastMonday.getDate() + 6);
 
-    const from = monday.toISOString().split('T')[0];
-    const to = sunday.toISOString().split('T')[0];
+    const from = lastMonday.toISOString().split('T')[0];
+    const to = lastSunday.toISOString().split('T')[0];
+
+    console.log("Period:", from, to);
 
     const { rows: users } = await pool.query(
       `SELECT telegram_id, email, name 
@@ -40,7 +42,8 @@ cron.schedule('0 20 * * 0', async () => {
     for (const user of users) {
 
       const { rows: logs } = await pool.query(
-        `SELECT type, SUM(amount) as total
+        `SELECT type,
+                COALESCE(SUM(amount),0) as total
          FROM work_logs
          WHERE telegram_id=$1 
          AND created_at BETWEEN $2 AND $3
@@ -50,11 +53,16 @@ cron.schedule('0 20 * * 0', async () => {
 
       if (!logs.length) continue;
 
-      let text = `Weekly Report (${from} - ${to})\n\n`;
+      let text = `📊 Weekly Report (${from} - ${to})\n\n`;
+      let totalAll = 0;
 
       logs.forEach(r => {
-        text += `${r.type}: $${r.total}\n`;
+        const total = Number(r.total).toFixed(2);
+        totalAll += Number(r.total);
+        text += `${r.type}: $${total}\n`;
       });
+
+      text += `\n🧾 TOTAL: $${totalAll.toFixed(2)}`;
 
       await sendMail(
         user.email,
@@ -79,4 +87,7 @@ cron.schedule('0 20 * * 0', async () => {
   } catch (err) {
     console.error("Weekly job error:", err);
   }
+
+}, {
+  timezone: "America/Los_Angeles"  // ← важно для Railway
 });
