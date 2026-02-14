@@ -2,8 +2,11 @@ import PDFDocument from 'pdfkit';
 import { pool } from './db.js';
 import { sendMail } from './mail.js';
 
+const ADMIN_ID = "427968134";
+
 export function setupBot(bot) {
 
+  // ===== START =====
   bot.onText(/\/start/, async (msg) => {
     const id = msg.from.id.toString();
     const name = msg.from.first_name;
@@ -15,13 +18,70 @@ export function setupBot(bot) {
       [id, name]
     );
 
+    if (id === ADMIN_ID) {
+      return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
+        reply_markup: {
+          keyboard: [[{ text: "🛠 Admin Menu" }]],
+          resize_keyboard: true
+        }
+      });
+    }
+
     bot.sendMessage(msg.chat.id, "Welcome 👋");
   });
+
+  // ===== ADMIN MENU BUTTON =====
+  bot.on('message', async (msg) => {
+    const id = msg.from.id.toString();
+
+    if (msg.text === "🛠 Admin Menu" && id === ADMIN_ID) {
+      return bot.sendMessage(msg.chat.id,
+        "Admin Actions:",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "👥 Drivers", callback_data: "admin_drivers" }],
+              [{ text: "📊 Stats", callback_data: "admin_stats" }]
+            ]
+          }
+        }
+      );
+    }
+  });
+
+  // ===== CALLBACKS =====
+  bot.on('callback_query', async (query) => {
+    const id = query.from.id.toString();
+
+    if (id !== ADMIN_ID) return;
+
+    if (query.data === "admin_drivers") {
+      const { rows } = await pool.query(`SELECT name, telegram_id, approved FROM users`);
+
+      let text = "Drivers:\n\n";
+      rows.forEach(u => {
+        text += `Name: ${u.name}\nID: ${u.telegram_id}\nApproved: ${u.approved}\n\n`;
+      });
+
+      bot.sendMessage(query.message.chat.id, text);
+    }
+
+    if (query.data === "admin_stats") {
+      const { rows } = await pool.query(`SELECT SUM(amount) as total FROM work_logs`);
+      const total = rows[0].total || 0;
+
+      bot.sendMessage(query.message.chat.id, `Total company payout: $${total}`);
+    }
+
+    bot.answerCallbackQuery(query.id);
+  });
+
+  // ===== EXISTING COMMANDS (НЕ ЛОМАЕМ) =====
 
   bot.onText(/otr/, async (msg) => {
     const id = msg.from.id.toString();
     const { rows } = await pool.query(`SELECT otr_rate FROM users WHERE telegram_id=$1`, [id]);
-    const rate = rows[0].otr_rate;
+    const rate = rows[0]?.otr_rate || 0;
 
     bot.sendMessage(msg.chat.id, "Enter miles:");
 
@@ -42,7 +102,7 @@ export function setupBot(bot) {
   bot.onText(/boise$/, async (msg) => {
     const id = msg.from.id.toString();
     const { rows } = await pool.query(`SELECT boise_rate FROM users WHERE telegram_id=$1`, [id]);
-    const rate = rows[0].boise_rate;
+    const rate = rows[0]?.boise_rate || 0;
 
     await pool.query(
       `INSERT INTO work_logs (telegram_id,type,value,amount)
@@ -56,7 +116,7 @@ export function setupBot(bot) {
   bot.onText(/local/, async (msg) => {
     const id = msg.from.id.toString();
     const { rows } = await pool.query(`SELECT local_rate FROM users WHERE telegram_id=$1`, [id]);
-    const rate = rows[0].local_rate;
+    const rate = rows[0]?.local_rate || 0;
 
     bot.sendMessage(msg.chat.id, "Enter hours:");
 
@@ -77,10 +137,10 @@ export function setupBot(bot) {
   bot.onText(/debt/, async (msg) => {
     const id = msg.from.id.toString();
 
-    bot.sendMessage(msg.chat.id, "Enter last paid period (YYYY-MM-DD YYYY-MM-DD)");
+    bot.sendMessage(msg.chat.id, "Enter last paid period end date (YYYY-MM-DD)");
 
     bot.once('message', async (m) => {
-      const [from, to] = m.text.split(' ');
+      const to = m.text;
 
       const { rows } = await pool.query(
         `SELECT SUM(amount) as total
