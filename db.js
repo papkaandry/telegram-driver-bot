@@ -8,7 +8,7 @@ export const pool = new Pool({
 
 export async function initDB() {
 
-  // ===== USERS TABLE =====
+  // ===== USERS =====
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -24,7 +24,7 @@ export async function initDB() {
     );
   `);
 
-  // ===== WORK LOGS TABLE =====
+  // ===== WORK LOGS =====
   await pool.query(`
     CREATE TABLE IF NOT EXISTS work_logs (
       id SERIAL PRIMARY KEY,
@@ -32,31 +32,18 @@ export async function initDB() {
       type TEXT NOT NULL,
       value NUMERIC,
       amount NUMERIC,
-      created_at DATE DEFAULT CURRENT_DATE
+      created_at TIMESTAMP DEFAULT NOW()
     );
   `);
 
   // ===============================
-  // 🚀 ИНДЕКСЫ ДЛЯ УСКОРЕНИЯ
+  // 🚀 ПРОФЕССИОНАЛЬНЫЙ ИНДЕКС
   // ===============================
 
-  // быстрый поиск по telegram_id
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_work_logs_telegram
-    ON work_logs (telegram_id);
+    CREATE INDEX IF NOT EXISTS idx_work_logs_fast
+    ON work_logs (telegram_id, created_at DESC);
   `);
 
-  // быстрый поиск по дате
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_work_logs_created
-    ON work_logs (created_at);
-  `);
-
-  // самый важный комбинированный индекс
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_work_logs_telegram_date
-    ON work_logs (telegram_id, created_at);
-  `);
-
-  console.log("Database initialized with indexes 🚀");
+  console.log("Database initialized with high-speed indexes 🚀");
 }
