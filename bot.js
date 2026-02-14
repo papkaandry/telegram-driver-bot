@@ -75,6 +75,7 @@ export function setupBot(bot) {
       const text = msg.text;
       if (!text) return;
 
+      // ===== ADMIN MENU =====
       if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
         return bot.sendMessage(msg.chat.id,"Admin Panel:",{
           reply_markup: {
@@ -87,6 +88,7 @@ export function setupBot(bot) {
         });
       }
 
+      // ===== STATS =====
       if (text === "📊 Stats") {
         waitingInput[id] = "stats";
         return bot.sendMessage(msg.chat.id,"Enter last paid date (YYYY-MM-DD)");
@@ -103,6 +105,7 @@ export function setupBot(bot) {
 
       const user = rows[0];
 
+      // ===== DRIVER WORK =====
       if (text === "🚛 OTR") {
         waitingInput[id] = "otr";
         return bot.sendMessage(msg.chat.id,"Enter miles:");
@@ -128,6 +131,7 @@ export function setupBot(bot) {
         return bot.sendMessage(msg.chat.id,"Enter custom amount:");
       }
 
+      // ===== HANDLE INPUT =====
       if (waitingInput[id]) {
 
         const mode = waitingInput[id];
@@ -143,7 +147,6 @@ export function setupBot(bot) {
           }
 
           const [otr, local, boise] = parts.map(Number);
-
           if (isNaN(otr) || isNaN(local) || isNaN(boise)) {
             waitingInput[id] = "edit_rates";
             return bot.sendMessage(msg.chat.id,"❌ Numbers only");
@@ -162,10 +165,34 @@ export function setupBot(bot) {
 
           delete editTarget[id];
 
-          return bot.sendMessage(msg.chat.id,"✅ Rates updated successfully.");
+          return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
         }
 
-        // ----- STATS -----
+        // ===== ADMIN ADD WORK =====
+        if (mode === "admin_add_work" && id === ADMIN_ID) {
+
+          const parts = text.split(" ");
+          if (parts.length !== 4) {
+            waitingInput[id] = "admin_add_work";
+            return bot.sendMessage(msg.chat.id,
+              "❌ Format:\notr 500 350 2024-12-01");
+          }
+
+          const [type, value, amount, date] = parts;
+          const driverId = editTarget[id];
+
+          await pool.query(
+            `INSERT INTO work_logs (telegram_id,type,value,amount,created_at)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [driverId, type, value, amount, date]
+          );
+
+          delete editTarget[id];
+
+          return bot.sendMessage(msg.chat.id,"✅ Work added.");
+        }
+
+        // ===== STATS =====
         if (mode === "stats") {
 
           const result = await pool.query(
@@ -197,6 +224,7 @@ Total: $${amount.toFixed(2)}
           return bot.sendMessage(msg.chat.id,response);
         }
 
+        // ===== DRIVER INPUTS =====
         if (mode === "otr") {
           const miles = Number(text);
           const amount = Number((miles * user.otr_rate).toFixed(2));
@@ -249,138 +277,105 @@ Total: $${amount.toFixed(2)}
 
     const data = query.data;
 
-    // ===== DRIVERS =====
+    // ===== DRIVERS LIST (ONE MESSAGE) =====
     if (data === "admin_drivers") {
 
       const { rows } = await pool.query(
-        `SELECT telegram_id, name, approved FROM users`
+        `SELECT telegram_id, name, approved
+         FROM users
+         ORDER BY created_at DESC
+         LIMIT 10`
       );
 
-      for (const user of rows) {
+      if (!rows.length)
+        return bot.sendMessage(query.message.chat.id,"No drivers.");
 
-        const status = user.approved ? "🟢 Active" : "🔴 Blocked";
+      let text = "👥 Drivers List:\n\n";
+      const keyboard = [];
 
-        await bot.sendMessage(query.message.chat.id,
-          `👤 ${user.name}
-ID: ${user.telegram_id}
-${status}`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "📊 View Stats", callback_data: `view_${user.telegram_id}` },
-                  { text: "📧 Send Email", callback_data: `email_${user.telegram_id}` }
-                ],
-                [
-                  { text: "💰 Edit Rates", callback_data: `rates_${user.telegram_id}` }
-                ],
-                [
-                  { text: "✅ Access", callback_data: `access_${user.telegram_id}` }
-                ]
-              ]
-            }
-          }
-        );
-      }
-    }
+      rows.forEach(user => {
 
-    // ===== VIEW DRIVER STATS =====
-    if (data.startsWith("view_")) {
+        const status = user.approved ? "🟢" : "🔴";
 
-      const driverId = data.split("_")[1];
+        text += `${status} ${user.name}\n\n`;
 
-      const result = await pool.query(
-        `SELECT type,
-                COUNT(*) as count,
-                COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id=$1
-         GROUP BY type`,
-        [driverId]
-      );
-
-      let response = "📊 Driver Stats:\n\n";
-      let totalAll = 0;
-
-      result.rows.forEach(r => {
-        const amount = Number(r.total);
-        totalAll += amount;
-        response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
+        keyboard.push([
+          { text:`⚙ Manage ${user.name}`, callback_data:`manage_${user.telegram_id}` }
+        ]);
       });
 
-      response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
-
-      return bot.sendMessage(query.message.chat.id,response);
+      return bot.sendMessage(query.message.chat.id,text,{
+        reply_markup:{ inline_keyboard: keyboard }
+      });
     }
 
-    // ===== SEND EMAIL TO ONE =====
-    if (data.startsWith("email_")) {
+    // ===== MANAGE DRIVER =====
+    if (data.startsWith("manage_")) {
 
       const driverId = data.split("_")[1];
 
       const { rows } = await pool.query(
-        `SELECT email FROM users WHERE telegram_id=$1`,
+        `SELECT name, approved FROM users WHERE telegram_id=$1`,
         [driverId]
       );
 
-      if (!rows[0]?.email) {
-        return bot.sendMessage(query.message.chat.id,"❌ Driver has no email.");
-      }
+      if (!rows[0]) return;
 
-      const result = await pool.query(
-        `SELECT COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id=$1`,
-        [driverId]
+      const driver = rows[0];
+      const status = driver.approved ? "🟢 Active" : "🔴 Blocked";
+
+      return bot.sendMessage(query.message.chat.id,
+        `👤 ${driver.name}\nID: ${driverId}\n${status}`,
+        {
+          reply_markup:{
+            inline_keyboard:[
+              [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
+              [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
+              [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
+              [
+                { text:"✅ Approve", callback_data:`approve_${driverId}` },
+                { text:"❌ Block", callback_data:`block_${driverId}` }
+              ],
+              [{ text:"🗑 Delete Driver", callback_data:`delete_${driverId}` }]
+            ]
+          }
+        }
       );
-
-      const total = Number(result.rows[0].total).toFixed(2);
-      const text = `📊 Work Report\n\n🧾 TOTAL: $${total}`;
-
-      sendMail(rows[0].email,"Your Work Report",text)
-        .catch(e => console.log("EMAIL ERROR:",e.message));
-
-      return bot.sendMessage(query.message.chat.id,"📧 Email sent.");
     }
-
-    // ===== остальной твой код ниже остается без изменений =====
 
     if (data.startsWith("rates_")) {
       const driverId = data.split("_")[1];
       editTarget[id] = driverId;
       waitingInput[id] = "edit_rates";
       return bot.sendMessage(query.message.chat.id,
-        "Enter new rates:\nOTR Local Boise\n\nExample:\n0.70 30 650");
+        "Enter new rates:\n0.70 30 650");
     }
 
-    if (data.startsWith("access_")) {
+    if (data.startsWith("addwork_")) {
       const driverId = data.split("_")[1];
-      return bot.sendMessage(query.message.chat.id,"Access Control:",{
-        reply_markup:{
-          inline_keyboard:[
-            [
-              { text:"✅ Approve", callback_data:`approve_${driverId}` },
-              { text:"❌ Block", callback_data:`block_${driverId}` }
-            ]
-          ]
-        }
-      });
+      editTarget[id] = driverId;
+      waitingInput[id] = "admin_add_work";
+      return bot.sendMessage(query.message.chat.id,
+        "Enter:\notr 500 350 2024-12-01");
+    }
+
+    if (data.startsWith("delete_")) {
+      const driverId = data.split("_")[1];
+      await pool.query(`DELETE FROM work_logs WHERE telegram_id=$1`,[driverId]);
+      await pool.query(`DELETE FROM users WHERE telegram_id=$1`,[driverId]);
+      return bot.sendMessage(query.message.chat.id,"🗑 Driver deleted.");
     }
 
     if (data.startsWith("approve_")) {
       const driverId = data.split("_")[1];
       await pool.query(`UPDATE users SET approved=true WHERE telegram_id=$1`,[driverId]);
-      return bot.sendMessage(query.message.chat.id,"✅ Driver approved.");
+      return bot.sendMessage(query.message.chat.id,"✅ Approved.");
     }
 
     if (data.startsWith("block_")) {
       const driverId = data.split("_")[1];
       await pool.query(`UPDATE users SET approved=false WHERE telegram_id=$1`,[driverId]);
-      return bot.sendMessage(query.message.chat.id,"❌ Driver blocked.");
+      return bot.sendMessage(query.message.chat.id,"❌ Blocked.");
     }
 
     if (data === "clear_logs_confirm") {
@@ -398,7 +393,7 @@ Total: $${amount.toFixed(2)}
 
     if (data === "clear_logs_yes") {
       await pool.query(`DELETE FROM work_logs`);
-      return bot.sendMessage(query.message.chat.id,"🗑 All work logs deleted.");
+      return bot.sendMessage(query.message.chat.id,"🗑 All logs deleted.");
     }
 
     if (data === "clear_logs_no") {
@@ -408,7 +403,8 @@ Total: $${amount.toFixed(2)}
     if (data === "email_all") {
 
       const { rows } = await pool.query(
-        `SELECT telegram_id, email FROM users
+        `SELECT telegram_id, email
+         FROM users
          WHERE approved=true AND email IS NOT NULL`
       );
 
@@ -428,7 +424,7 @@ Total: $${amount.toFixed(2)}
           .catch(e => console.log("EMAIL ERROR:",e.message));
       }
 
-      return bot.sendMessage(query.message.chat.id,"📧 Emails sent to all.");
+      return bot.sendMessage(query.message.chat.id,"📧 Emails sent.");
     }
 
   });
