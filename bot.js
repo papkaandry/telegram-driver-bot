@@ -71,7 +71,8 @@ export function setupBot(bot) {
         reply_markup:{
           inline_keyboard:[
             [{ text:"👥 Drivers", callback_data:"admin_drivers" }],
-            [{ text:"📧 Send To All", callback_data:"email_all" }]
+            [{ text:"📧 Send To All", callback_data:"email_all" }],
+            [{ text:"🧹 Clear ALL Work Logs", callback_data:"clear_all_logs_confirm" }]
           ]
         }
       });
@@ -149,6 +150,21 @@ Total: $${amount.toFixed(2)}
         return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
       }
 
+      if (mode === "delete_by_date") {
+
+        const [from, to] = text.split(" ");
+
+        await pool.query(
+          `DELETE FROM work_logs
+           WHERE telegram_id=$1
+           AND created_at BETWEEN $2 AND $3`,
+          [editTarget[id], from, to]
+        );
+
+        delete editTarget[id];
+        return bot.sendMessage(msg.chat.id,"🗑 Logs deleted by date.");
+      }
+
       if (mode === "admin_value") {
         adminState[id].value = text;
         waitingInput[id] = "admin_date";
@@ -158,7 +174,6 @@ Total: $${amount.toFixed(2)}
       if (mode === "admin_date") {
 
         adminState[id].date = text;
-
         const s = adminState[id];
 
         await pool.query(
@@ -181,8 +196,30 @@ Total: $${amount.toFixed(2)}
     const id = query.from.id.toString();
     const data = query.data;
 
-    // 🔥 ФИКС — ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА АДМИНА
     if (id !== ADMIN_ID) return;
+
+    if (data === "clear_all_logs_confirm") {
+      return bot.sendMessage(query.message.chat.id,
+        "⚠ Delete ALL work logs?",
+        {
+          reply_markup:{
+            inline_keyboard:[
+              [{ text:"✅ YES DELETE ALL", callback_data:"clear_all_logs" }],
+              [{ text:"❌ Cancel", callback_data:"cancel_clear_all" }]
+            ]
+          }
+        }
+      );
+    }
+
+    if (data === "clear_all_logs") {
+      await pool.query(`DELETE FROM work_logs`);
+      return bot.sendMessage(query.message.chat.id,"🧹 All logs deleted.");
+    }
+
+    if (data === "cancel_clear_all") {
+      return bot.sendMessage(query.message.chat.id,"Cancelled.");
+    }
 
     if (data === "use_last_date") {
       waitingInput[id] = "stats_date";
@@ -238,78 +275,57 @@ ID: ${driverId}`,
               [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
               [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
               [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
+              [{ text:"🗑 Delete ALL Work", callback_data:`delete_all_${driverId}` }],
+              [{ text:"🗑 Delete By Date", callback_data:`delete_date_${driverId}` }],
               [
                 { text:"✅ Approve", callback_data:`approve_${driverId}` },
                 { text:"❌ Block", callback_data:`block_${driverId}` }
               ],
-              [{ text:"🗑 Delete", callback_data:`delete_${driverId}` }]
+              [{ text:"🗑 Delete Driver", callback_data:`delete_${driverId}` }]
             ]
           }
         }
       );
     }
 
-    if (data.startsWith("view_")) {
+    if (data.startsWith("delete_all_")) {
 
-      const driverId = data.split("_")[1];
-
-      const result = await pool.query(
-        `SELECT type, COUNT(*) as count,
-                COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id=$1
-         GROUP BY type`,
-        [driverId]
-      );
-
-      let response = "📊 Driver Stats:\n\n";
-      let totalAll = 0;
-
-      result.rows.forEach(r=>{
-        const amount = Number(r.total);
-        totalAll += amount;
-        response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
-      });
-
-      response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
-      return bot.sendMessage(query.message.chat.id,response);
-    }
-
-    if (data.startsWith("rates_")) {
-      editTarget[id] = data.split("_")[1];
-      waitingInput[id] = "edit_rates";
-      return bot.sendMessage(query.message.chat.id,
-        "Enter new rates:\n0.70 30 650");
-    }
-
-    if (data.startsWith("addwork_")) {
-
-      const driverId = data.split("_")[1];
-      adminState[id] = { driverId };
+      const driverId = data.split("_")[2];
 
       return bot.sendMessage(query.message.chat.id,
-        "Select type:",
+        "⚠ Delete ALL work for this driver?",
         {
           reply_markup:{
             inline_keyboard:[
-              [{ text:"OTR", callback_data:"type_otr" }],
-              [{ text:"Local", callback_data:"type_local" }],
-              [{ text:"Boise", callback_data:"type_boise" }],
-              [{ text:"Boise Custom", callback_data:"type_boise_custom" }]
+              [{ text:"✅ Confirm", callback_data:`confirm_delete_all_${driverId}` }],
+              [{ text:"❌ Cancel", callback_data:"cancel_delete_driver_logs" }]
             ]
           }
         }
       );
     }
 
-    if (data.startsWith("type_")) {
-      adminState[id].type = data.replace("type_","");
-      waitingInput[id] = "admin_value";
-      return bot.sendMessage(query.message.chat.id,"Enter value:");
+    if (data.startsWith("confirm_delete_all_")) {
+
+      const driverId = data.split("_")[3];
+
+      await pool.query(`DELETE FROM work_logs WHERE telegram_id=$1`,[driverId]);
+
+      return bot.sendMessage(query.message.chat.id,"🗑 All driver logs deleted.");
+    }
+
+    if (data.startsWith("delete_date_")) {
+
+      const driverId = data.split("_")[2];
+      editTarget[id] = driverId;
+      waitingInput[id] = "delete_by_date";
+
+      return bot.sendMessage(query.message.chat.id,
+        "Enter date range:\nYYYY-MM-DD YYYY-MM-DD");
+    }
+
+    if (data === "cancel_delete_driver_logs") {
+      return bot.sendMessage(query.message.chat.id,"Cancelled.");
     }
 
     if (data.startsWith("approve_")) {
@@ -331,7 +347,7 @@ Total: $${amount.toFixed(2)}
       await pool.query(`DELETE FROM work_logs WHERE telegram_id=$1`,[driverId]);
       await pool.query(`DELETE FROM users WHERE telegram_id=$1`,[driverId]);
 
-      return bot.sendMessage(query.message.chat.id,"🗑 Deleted.");
+      return bot.sendMessage(query.message.chat.id,"🗑 Driver deleted.");
     }
 
   });
