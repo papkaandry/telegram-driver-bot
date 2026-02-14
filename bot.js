@@ -1,6 +1,8 @@
 import { pool } from './db.js';
+import { sendMail } from './mail.js';
 
 const ADMIN_ID = "427968134";
+const ADMIN_EMAIL = "work.papkaandry@gmail.com";
 
 export function setupBot(bot) {
 
@@ -63,7 +65,6 @@ export function setupBot(bot) {
 
     const id = msg.from.id.toString();
     const text = msg.text;
-
     if (!text) return;
 
     // ===== ADMIN MENU =====
@@ -80,7 +81,7 @@ export function setupBot(bot) {
       );
     }
 
-    // ===== STATS REQUEST =====
+    // ===== STATS =====
     if (text === "📊 Stats") {
       waitingInput[id] = "stats";
       return bot.sendMessage(msg.chat.id,
@@ -88,9 +89,8 @@ export function setupBot(bot) {
       );
     }
 
-    // ===== WORK INPUT =====
     const { rows } = await pool.query(
-      `SELECT approved, otr_rate, local_rate, boise_rate
+      `SELECT approved, otr_rate, local_rate, boise_rate, email
        FROM users WHERE telegram_id=$1`,
       [id]
     );
@@ -100,6 +100,7 @@ export function setupBot(bot) {
 
     const user = rows[0];
 
+    // ===== WORK BUTTONS =====
     if (text === "🚛 OTR") {
       waitingInput[id] = "otr";
       return bot.sendMessage(msg.chat.id, "Enter miles:");
@@ -124,12 +125,13 @@ export function setupBot(bot) {
       return bot.sendMessage(msg.chat.id, "Enter custom amount:");
     }
 
-    // ===== HANDLE INPUT VALUES =====
+    // ===== HANDLE INPUT =====
     if (waitingInput[id]) {
 
       const mode = waitingInput[id];
       delete waitingInput[id];
 
+      // ---------- STATS ----------
       if (mode === "stats") {
 
         const { rows } = await pool.query(
@@ -137,6 +139,13 @@ export function setupBot(bot) {
            FROM work_logs
            WHERE telegram_id=$1 AND created_at > $2
            GROUP BY type`,
+          [id, text]
+        );
+
+        const totalAll = await pool.query(
+          `SELECT SUM(amount) as total
+           FROM work_logs
+           WHERE telegram_id=$1 AND created_at > $2`,
           [id, text]
         );
 
@@ -152,11 +161,27 @@ export function setupBot(bot) {
           response += `${emoji} ${r.type}\nCount: ${r.count}\nTotal: $${r.total}\n\n`;
         });
 
-        if (rows.length === 0) response += "No unpaid work.";
+        response += `🧾 TOTAL ALL: $${totalAll.rows[0].total || 0}`;
+
+        // email send
+        if (user.email) {
+          await sendMail(
+            user.email,
+            "Your Work Report",
+            response
+          );
+
+          await sendMail(
+            ADMIN_EMAIL,
+            "Driver Report Copy",
+            response
+          );
+        }
 
         return bot.sendMessage(msg.chat.id, response);
       }
 
+      // ---------- OTR ----------
       if (mode === "otr") {
         const amount = Number(text) * user.otr_rate;
         await pool.query(
@@ -167,6 +192,7 @@ export function setupBot(bot) {
         return bot.sendMessage(msg.chat.id, `Saved: $${amount}`);
       }
 
+      // ---------- LOCAL ----------
       if (mode === "local") {
         const amount = Number(text) * user.local_rate;
         await pool.query(
@@ -177,6 +203,7 @@ export function setupBot(bot) {
         return bot.sendMessage(msg.chat.id, `Saved: $${amount}`);
       }
 
+      // ---------- BOISE CUSTOM ----------
       if (mode === "boise_custom") {
         await pool.query(
           `INSERT INTO work_logs (telegram_id,type,value,amount)
@@ -194,7 +221,10 @@ export function setupBot(bot) {
     const id = query.from.id.toString();
     if (id !== ADMIN_ID) return;
 
-    if (query.data === "admin_drivers") {
+    const data = query.data;
+
+    // ===== DRIVERS =====
+    if (data === "admin_drivers") {
 
       const { rows } = await pool.query(
         `SELECT telegram_id, name, approved FROM users`
@@ -205,9 +235,56 @@ export function setupBot(bot) {
         const status = user.approved ? "🟢 Active" : "🔴 Blocked";
 
         await bot.sendMessage(query.message.chat.id,
-          `👤 ${user.name}\nID: ${user.telegram_id}\n${status}`
+          `👤 ${user.name}\nID: ${user.telegram_id}\n${status}`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "⚙ Settings", callback_data: `settings_${user.telegram_id}` }]
+              ]
+            }
+          }
         );
       }
+    }
+
+    // ===== SETTINGS =====
+    if (data.startsWith("settings_")) {
+
+      const userId = data.split("_")[1];
+
+      return bot.sendMessage(query.message.chat.id,
+        "⚙ Driver Settings:",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💰 Edit Rates", callback_data: `rates_${userId}` }],
+              [{ text: "📊 View Stats", callback_data: `stats_${userId}` }]
+            ]
+          }
+        }
+      );
+    }
+
+    // ===== ADMIN VIEW STATS =====
+    if (data.startsWith("stats_")) {
+
+      const userId = data.split("_")[1];
+
+      const { rows } = await pool.query(
+        `SELECT type, COUNT(*) as count, SUM(amount) as total
+         FROM work_logs
+         WHERE telegram_id=$1
+         GROUP BY type`,
+        [userId]
+      );
+
+      let text = "📊 Driver Stats:\n\n";
+
+      rows.forEach(r => {
+        text += `${r.type}\nCount: ${r.count}\nTotal: $${r.total}\n\n`;
+      });
+
+      return bot.sendMessage(query.message.chat.id, text);
     }
 
     bot.answerCallbackQuery(query.id);
