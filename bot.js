@@ -17,17 +17,21 @@ export function setupBot(bot) {
       [id, name]
     );
 
-    // ===== ADMIN =====
     if (id === ADMIN_ID) {
       return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
         reply_markup: {
-          keyboard: [[{ text: "🛠 Admin Menu" }]],
+          keyboard: [
+            [{ text: "🛠 Admin Menu" }],
+            [{ text: "🚛 OTR" }],
+            [{ text: "🏙 Local" }],
+            [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+            [{ text: "📊 Stats" }]
+          ],
           resize_keyboard: true
         }
       });
     }
 
-    // ===== DRIVER =====
     const { rows } = await pool.query(
       `SELECT approved FROM users WHERE telegram_id=$1`,
       [id]
@@ -45,7 +49,7 @@ export function setupBot(bot) {
           [{ text: "🚛 OTR" }],
           [{ text: "🏙 Local" }],
           [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-          [{ text: "💰 Debt" }]
+          [{ text: "📊 Stats" }]
         ],
         resize_keyboard: true
       }
@@ -65,24 +69,22 @@ export function setupBot(bot) {
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: "👥 Drivers", callback_data: "admin_drivers" }],
-              [{ text: "📊 Company Stats", callback_data: "admin_stats" }]
+              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
             ]
           }
         }
       );
     }
 
-    // ===== DRIVER LOGIC =====
-    if (id === ADMIN_ID) return;
-
+    // ===== WORK LOGIC (ADMIN + DRIVER) =====
     const { rows } = await pool.query(
       `SELECT approved, otr_rate, local_rate, boise_rate
        FROM users WHERE telegram_id=$1`,
       [id]
     );
 
-    if (!rows[0]?.approved) return;
+    if (!rows[0]) return;
+    if (id !== ADMIN_ID && !rows[0].approved) return;
 
     const user = rows[0];
 
@@ -156,13 +158,15 @@ export function setupBot(bot) {
       });
     }
 
-    // DEBT
-    if (text === "💰 Debt") {
+    // PERSONAL STATS (ADMIN + DRIVER)
+    if (text === "📊 Stats") {
+
       bot.sendMessage(msg.chat.id,
         "Enter last paid period end date (YYYY-MM-DD)"
       );
 
       bot.once('message', async (m) => {
+
         if (m.from.id.toString() !== id) return;
 
         const to = m.text;
@@ -180,6 +184,10 @@ export function setupBot(bot) {
         rows.forEach(r => {
           response += `${r.type}\nCount: ${r.count}\nTotal: $${r.total}\n\n`;
         });
+
+        if (rows.length === 0) {
+          response += "No unpaid work.";
+        }
 
         bot.sendMessage(msg.chat.id, response);
       });
@@ -292,7 +300,7 @@ export function setupBot(bot) {
       });
     }
 
-    // STATS
+    // DRIVER STATS (ADMIN VIEW)
     if (data.startsWith("stats_")) {
 
       const userId = data.split("_")[1];
@@ -312,18 +320,6 @@ export function setupBot(bot) {
       });
 
       bot.sendMessage(query.message.chat.id, text);
-    }
-
-    // COMPANY STATS
-    if (data === "admin_stats") {
-
-      const { rows } = await pool.query(
-        `SELECT SUM(amount) as total FROM work_logs`
-      );
-
-      bot.sendMessage(query.message.chat.id,
-        `Total company payout: $${rows[0].total || 0}`
-      );
     }
 
     bot.answerCallbackQuery(query.id);
