@@ -1,22 +1,17 @@
-import express from 'express';
-import { bot, handleUpdate } from './bot.js';
+import 'dotenv/config';
+import TelegramBot from 'node-telegram-bot-api';
+import cron from 'node-cron';
+import { initDB } from './db.js';
+import { setupBot } from './bot.js';
 
-const app = express();
-app.use(express.json());
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-app.post('/webhook', async (req, res) => {
-  await handleUpdate(req.body);
-  res.sendStatus(200);
+await initDB();
+setupBot(bot);
+
+// Weekly report every Sunday 20:00
+cron.schedule('0 20 * * 0', async () => {
+  console.log('Weekly job executed');
 });
 
-app.get('/', (req, res) => {
-  res.send('OK');
-});
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, async () => {
-  const webhookUrl = `${process.env.WEBHOOK_URL}/webhook`;
-  await bot.setWebHook(webhookUrl);
-  console.log('🤖 Bot started with webhook:', webhookUrl);
-});
+console.log('Bot started');
