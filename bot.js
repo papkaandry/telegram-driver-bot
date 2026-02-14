@@ -1,71 +1,100 @@
-import TelegramBot from 'node-telegram-bot-api';
+import PDFDocument from 'pdfkit';
+import { pool } from './db.js';
+import { sendMail } from './mail.js';
 
-const token = process.env.BOT_TOKEN;
-export const bot = new TelegramBot(token, { polling: false });
+export function setupBot(bot) {
 
-const ADMIN_ID = String(process.env.ADMIN_ID);
+  bot.onText(/\/start/, async (msg) => {
+    const id = msg.from.id.toString();
+    const name = msg.from.first_name;
 
-// ===== MENUS =====
-export function sendRootMenu(chatId, userId) {
-  if (userId === ADMIN_ID) {
-    return bot.sendMessage(chatId, '👮 Admin menu', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🧰 Work', callback_data: 'work' }],
-          [{ text: '💰 Payment', callback_data: 'payment' }],
-          [{ text: '👥 Drivers', callback_data: 'drivers' }]
-        ]
-      }
-    });
-  }
+    await pool.query(
+      `INSERT INTO users (telegram_id, name)
+       VALUES ($1,$2)
+       ON CONFLICT (telegram_id) DO NOTHING`,
+      [id, name]
+    );
 
-  return bot.sendMessage(chatId, 'Menu', {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🧰 Work', callback_data: 'work' }],
-        [{ text: '💰 Payment', callback_data: 'payment' }]
-      ]
-    }
+    bot.sendMessage(msg.chat.id, "Welcome 👋");
   });
-}
 
-// ===== UPDATE HANDLER =====
-export async function handleUpdate(update) {
-  try {
-    if (update.message) {
-      const chatId = update.message.chat.id;
-      const userId = String(update.message.from.id);
-      const text = (update.message.text || '').trim();
+  bot.onText(/otr/, async (msg) => {
+    const id = msg.from.id.toString();
+    const { rows } = await pool.query(`SELECT otr_rate FROM users WHERE telegram_id=$1`, [id]);
+    const rate = rows[0].otr_rate;
 
-      if (text === '/start') {
-        return sendRootMenu(chatId, userId);
-      }
-    }
+    bot.sendMessage(msg.chat.id, "Enter miles:");
 
-    if (update.callback_query) {
-      const q = update.callback_query;
-      const chatId = q.message.chat.id;
-      const userId = String(q.from.id);
-      const data = q.data;
+    bot.once('message', async (m) => {
+      const miles = Number(m.text);
+      const amount = miles * rate;
 
-      await bot.answerCallbackQuery(q.id);
+      await pool.query(
+        `INSERT INTO work_logs (telegram_id,type,value,amount)
+         VALUES ($1,'otr',$2,$3)`,
+        [id, miles, amount]
+      );
 
-      if (data === 'drivers') {
-        if (userId !== ADMIN_ID) {
-          return bot.sendMessage(chatId, '⛔ Access denied');
-        }
-        return bot.sendMessage(chatId, '👥 Drivers (next step)');
-      }
+      bot.sendMessage(msg.chat.id, `Saved: $${amount}`);
+    });
+  });
 
-      if (data === 'work') {
-        return bot.sendMessage(chatId, '🧰 Work (next step)');
-      }
+  bot.onText(/boise$/, async (msg) => {
+    const id = msg.from.id.toString();
+    const { rows } = await pool.query(`SELECT boise_rate FROM users WHERE telegram_id=$1`, [id]);
+    const rate = rows[0].boise_rate;
 
-      if (data === 'payment') {
-        return bot.sendMessage(chatId, '💰 Payment (next step)');
-      }
-    }
-  } catch (err) {
-    console.error('BOT ERROR', err);
-  }
+    await pool.query(
+      `INSERT INTO work_logs (telegram_id,type,value,amount)
+       VALUES ($1,'boise',1,$2)`,
+      [id, rate]
+    );
+
+    bot.sendMessage(msg.chat.id, `Boise saved: $${rate}`);
+  });
+
+  bot.onText(/local/, async (msg) => {
+    const id = msg.from.id.toString();
+    const { rows } = await pool.query(`SELECT local_rate FROM users WHERE telegram_id=$1`, [id]);
+    const rate = rows[0].local_rate;
+
+    bot.sendMessage(msg.chat.id, "Enter hours:");
+
+    bot.once('message', async (m) => {
+      const hours = Number(m.text);
+      const amount = hours * rate;
+
+      await pool.query(
+        `INSERT INTO work_logs (telegram_id,type,value,amount)
+         VALUES ($1,'local',$2,$3)`,
+        [id, hours, amount]
+      );
+
+      bot.sendMessage(msg.chat.id, `Saved: $${amount}`);
+    });
+  });
+
+  bot.onText(/debt/, async (msg) => {
+    const id = msg.from.id.toString();
+
+    bot.sendMessage(msg.chat.id, "Enter last paid period (YYYY-MM-DD YYYY-MM-DD)");
+
+    bot.once('message', async (m) => {
+      const [from, to] = m.text.split(' ');
+
+      const { rows } = await pool.query(
+        `SELECT SUM(amount) as total
+         FROM work_logs
+         WHERE telegram_id=$1 AND created_at > $2`,
+        [id, to]
+      );
+
+      const total = rows[0].total || 0;
+
+      bot.sendMessage(msg.chat.id,
+        `Company owes you:\n\nTotal: $${total}`
+      );
+    });
+  });
+
 }
