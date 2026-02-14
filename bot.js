@@ -137,7 +137,6 @@ export function setupBot(bot) {
         if (mode === "edit_rates" && id === ADMIN_ID) {
 
           const parts = text.split(" ");
-
           if (parts.length !== 3) {
             waitingInput[id] = "edit_rates";
             return bot.sendMessage(msg.chat.id,"❌ Format: 0.70 30 650");
@@ -198,7 +197,6 @@ Total: $${amount.toFixed(2)}
           return bot.sendMessage(msg.chat.id,response);
         }
 
-        // ----- OTR -----
         if (mode === "otr") {
           const miles = Number(text);
           const amount = Number((miles * user.otr_rate).toFixed(2));
@@ -210,7 +208,6 @@ Total: $${amount.toFixed(2)}
           return bot.sendMessage(msg.chat.id,`🚛 Saved: $${amount}`);
         }
 
-        // ----- LOCAL -----
         if (mode === "local") {
           let hours = text.includes(":")
             ? Number(text.split(":")[0]) + Number(text.split(":")[1]) / 60
@@ -227,7 +224,6 @@ Total: $${amount.toFixed(2)}
           return bot.sendMessage(msg.chat.id,`🏙 Saved: $${amount}`);
         }
 
-        // ----- BOISE CUSTOM -----
         if (mode === "boise_custom") {
           const amount = Number(text).toFixed(2);
           await pool.query(
@@ -290,9 +286,7 @@ ${status}`,
 
     // ===== EDIT RATES BUTTON =====
     if (data.startsWith("rates_")) {
-
       const driverId = data.split("_")[1];
-
       editTarget[id] = driverId;
       waitingInput[id] = "edit_rates";
 
@@ -302,7 +296,82 @@ ${status}`,
       );
     }
 
-    // дальше весь твой код остаётся таким же...
+    // ===== ACCESS =====
+    if (data.startsWith("access_")) {
+
+      const driverId = data.split("_")[1];
+
+      return bot.sendMessage(query.message.chat.id,"Access Control:",{
+        reply_markup:{
+          inline_keyboard:[
+            [
+              { text:"✅ Approve", callback_data:`approve_${driverId}` },
+              { text:"❌ Block", callback_data:`block_${driverId}` }
+            ]
+          ]
+        }
+      });
+    }
+
+    if (data.startsWith("approve_")) {
+      const driverId = data.split("_")[1];
+      await pool.query(`UPDATE users SET approved=true WHERE telegram_id=$1`,[driverId]);
+      return bot.sendMessage(query.message.chat.id,"✅ Driver approved.");
+    }
+
+    if (data.startsWith("block_")) {
+      const driverId = data.split("_")[1];
+      await pool.query(`UPDATE users SET approved=false WHERE telegram_id=$1`,[driverId]);
+      return bot.sendMessage(query.message.chat.id,"❌ Driver blocked.");
+    }
+
+    if (data === "clear_logs_confirm") {
+      return bot.sendMessage(query.message.chat.id,"⚠ DELETE ALL WORK LOGS?",{
+        reply_markup:{
+          inline_keyboard:[
+            [
+              { text:"✅ YES DELETE", callback_data:"clear_logs_yes" },
+              { text:"❌ Cancel", callback_data:"clear_logs_no" }
+            ]
+          ]
+        }
+      });
+    }
+
+    if (data === "clear_logs_yes") {
+      await pool.query(`DELETE FROM work_logs`);
+      return bot.sendMessage(query.message.chat.id,"🗑 All work logs deleted.");
+    }
+
+    if (data === "clear_logs_no") {
+      return bot.sendMessage(query.message.chat.id,"Cancelled.");
+    }
+
+    if (data === "email_all") {
+
+      const { rows } = await pool.query(
+        `SELECT telegram_id, email FROM users
+         WHERE approved=true AND email IS NOT NULL`
+      );
+
+      for (const user of rows) {
+
+        const result = await pool.query(
+          `SELECT COALESCE(SUM(amount),0) as total
+           FROM work_logs
+           WHERE telegram_id=$1`,
+          [user.telegram_id]
+        );
+
+        const total = Number(result.rows[0].total).toFixed(2);
+        const text = `📊 Work Report\n\n🧾 TOTAL: $${total}`;
+
+        sendMail(user.email,"Your Work Report",text)
+          .catch(e => console.log("EMAIL ERROR:",e.message));
+      }
+
+      return bot.sendMessage(query.message.chat.id,"📧 Emails sent to all.");
+    }
 
   });
 
