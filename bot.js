@@ -173,12 +173,13 @@ Total: $${total.toFixed(2)}
           response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
 
           if (user.email) {
-            try {
-              await sendMail(user.email,"Your Work Report",response);
-              await sendMail(ADMIN_EMAIL,"Driver Report Copy",response);
-            } catch(e){
-              console.log("EMAIL ERROR:",e.message);
-            }
+  sendMail(user.email,"Your Work Report",response)
+    .catch(e => console.log("EMAIL ERROR:", e.message));
+
+  sendMail(ADMIN_EMAIL,"Driver Report Copy",response)
+    .catch(e => console.log("EMAIL ERROR:", e.message));
+}
+
           }
 
           return bot.sendMessage(msg.chat.id,response);
