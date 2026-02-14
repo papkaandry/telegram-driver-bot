@@ -68,7 +68,6 @@ export function setupBot(bot) {
       const text = msg.text;
       if (!text) return;
 
-      // ===== ADMIN MENU =====
       if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
         return bot.sendMessage(msg.chat.id,"Admin Panel:",{
           reply_markup: {
@@ -80,7 +79,6 @@ export function setupBot(bot) {
         });
       }
 
-      // ===== STATS =====
       if (text === "📊 Stats") {
         waitingInput[id] = "stats";
         return bot.sendMessage(msg.chat.id,"Enter last paid date (YYYY-MM-DD)");
@@ -97,7 +95,6 @@ export function setupBot(bot) {
 
       const user = rows[0];
 
-      // ===== WORK BUTTONS =====
       if (text === "🚛 OTR") {
         waitingInput[id] = "otr";
         return bot.sendMessage(msg.chat.id,"Enter miles:");
@@ -125,37 +122,12 @@ export function setupBot(bot) {
         return bot.sendMessage(msg.chat.id,"Enter custom amount:");
       }
 
-      // ===== HANDLE INPUT =====
       if (waitingInput[id]) {
 
         const mode = waitingInput[id];
         delete waitingInput[id];
 
-        // ---------- EDIT RATES ----------
-        if (mode === "edit_rates" && id === ADMIN_ID) {
-
-          const [otr, local, boise] = text.split(" ").map(Number);
-
-          if (!otr || !local || !boise) {
-            waitingInput[id] = "edit_rates";
-            return bot.sendMessage(msg.chat.id,"❌ Format: 0.70 30 650");
-          }
-
-          const targetId = editTarget[id];
-
-          await pool.query(
-            `UPDATE users
-             SET otr_rate=$1, local_rate=$2, boise_rate=$3
-             WHERE telegram_id=$4`,
-            [otr, local, boise, targetId]
-          );
-
-          delete editTarget[id];
-
-          return bot.sendMessage(msg.chat.id,"✅ Rates updated");
-        }
-
-        // ---------- STATS (ОПТИМИЗИРОВАНО) ----------
+        // ---------- STATS (УЛЬТРА БЫСТРО) ----------
         if (mode === "stats") {
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
@@ -172,7 +144,7 @@ export function setupBot(bot) {
             FROM work_logs
             WHERE telegram_id=$1
             AND created_at > $2
-            GROUP BY GROUPING SETS ((type), ())
+            GROUP BY type
             `,
             [id, text]
           );
@@ -182,10 +154,8 @@ export function setupBot(bot) {
 
           result.rows.forEach(r => {
 
-            if (r.type === null) {
-              totalAll = Number(r.total);
-              return;
-            }
+            const total = Number(r.total);
+            totalAll += total;
 
             const emoji =
               r.type === "otr" ? "🚛" :
@@ -195,7 +165,7 @@ export function setupBot(bot) {
 
             response += `${emoji} ${r.type}
 Count: ${r.count}
-Total: $${Number(r.total).toFixed(2)}
+Total: $${total.toFixed(2)}
 
 `;
           });
@@ -282,87 +252,6 @@ Total: $${Number(r.total).toFixed(2)}
     } catch (err) {
       console.error(err);
       bot.sendMessage(msg.chat.id,"❌ Error occurred");
-    }
-
-  });
-
-  // ================= CALLBACK =================
-  bot.on('callback_query', async (query) => {
-
-    try {
-
-      const id = query.from.id.toString();
-      if (id !== ADMIN_ID) return;
-
-      const data = query.data;
-
-      if (data === "admin_drivers") {
-
-        const { rows } = await pool.query(
-          `SELECT telegram_id, name, approved FROM users`
-        );
-
-        for (const user of rows) {
-
-          const status = user.approved ? "🟢 Active" : "🔴 Blocked";
-
-          await bot.sendMessage(query.message.chat.id,
-            `👤 ${user.name}
-ID: ${user.telegram_id}
-${status}`,
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: "💰 Edit Rates", callback_data: `rates_${user.telegram_id}` }]
-                ]
-              }
-            }
-          );
-        }
-      }
-
-      if (data.startsWith("rates_")) {
-
-        const userId = data.split("_")[1];
-
-        editTarget[id] = userId;
-        waitingInput[id] = "edit_rates";
-
-        return bot.sendMessage(query.message.chat.id,
-          "Enter rates: OTR Local Boise\nExample: 0.70 30 650"
-        );
-      }
-
-      if (data === "clear_logs_confirm") {
-
-        return bot.sendMessage(query.message.chat.id,
-          "⚠ DELETE ALL WORK LOGS?",
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "✅ YES DELETE", callback_data: "clear_logs_yes" },
-                  { text: "❌ Cancel", callback_data: "clear_logs_no" }
-                ]
-              ]
-            }
-          }
-        );
-      }
-
-      if (data === "clear_logs_yes") {
-        await pool.query(`DELETE FROM work_logs`);
-        return bot.sendMessage(query.message.chat.id,"🗑 All work logs deleted.");
-      }
-
-      if (data === "clear_logs_no") {
-        return bot.sendMessage(query.message.chat.id,"Cancelled.");
-      }
-
-      bot.answerCallbackQuery(query.id);
-
-    } catch (err) {
-      console.error(err);
     }
 
   });
