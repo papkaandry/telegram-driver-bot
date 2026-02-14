@@ -284,23 +284,81 @@ ${status}`,
       }
     }
 
-    // ===== EDIT RATES BUTTON =====
+    // ===== VIEW DRIVER STATS =====
+    if (data.startsWith("view_")) {
+
+      const driverId = data.split("_")[1];
+
+      const result = await pool.query(
+        `SELECT type,
+                COUNT(*) as count,
+                COALESCE(SUM(amount),0) as total
+         FROM work_logs
+         WHERE telegram_id=$1
+         GROUP BY type`,
+        [driverId]
+      );
+
+      let response = "📊 Driver Stats:\n\n";
+      let totalAll = 0;
+
+      result.rows.forEach(r => {
+        const amount = Number(r.total);
+        totalAll += amount;
+        response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
+      });
+
+      response += `🧾 TOTAL ALL: $${totalAll.toFixed(2)}`;
+
+      return bot.sendMessage(query.message.chat.id,response);
+    }
+
+    // ===== SEND EMAIL TO ONE =====
+    if (data.startsWith("email_")) {
+
+      const driverId = data.split("_")[1];
+
+      const { rows } = await pool.query(
+        `SELECT email FROM users WHERE telegram_id=$1`,
+        [driverId]
+      );
+
+      if (!rows[0]?.email) {
+        return bot.sendMessage(query.message.chat.id,"❌ Driver has no email.");
+      }
+
+      const result = await pool.query(
+        `SELECT COALESCE(SUM(amount),0) as total
+         FROM work_logs
+         WHERE telegram_id=$1`,
+        [driverId]
+      );
+
+      const total = Number(result.rows[0].total).toFixed(2);
+      const text = `📊 Work Report\n\n🧾 TOTAL: $${total}`;
+
+      sendMail(rows[0].email,"Your Work Report",text)
+        .catch(e => console.log("EMAIL ERROR:",e.message));
+
+      return bot.sendMessage(query.message.chat.id,"📧 Email sent.");
+    }
+
+    // ===== остальной твой код ниже остается без изменений =====
+
     if (data.startsWith("rates_")) {
       const driverId = data.split("_")[1];
       editTarget[id] = driverId;
       waitingInput[id] = "edit_rates";
-
-      return bot.sendMessage(
-        query.message.chat.id,
-        "Enter new rates:\nOTR Local Boise\n\nExample:\n0.70 30 650"
-      );
+      return bot.sendMessage(query.message.chat.id,
+        "Enter new rates:\nOTR Local Boise\n\nExample:\n0.70 30 650");
     }
 
-    // ===== ACCESS =====
     if (data.startsWith("access_")) {
-
       const driverId = data.split("_")[1];
-
       return bot.sendMessage(query.message.chat.id,"Access Control:",{
         reply_markup:{
           inline_keyboard:[
