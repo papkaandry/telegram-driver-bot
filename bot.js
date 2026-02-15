@@ -67,7 +67,20 @@ export function setupBot(bot) {
     const id = msg.from.id.toString();
     const text = msg.text;
     if (!text) return;
+    // ===== ADMIN MENU BUTTON FIX =====
+    if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
 
+      return bot.sendMessage(msg.chat.id,
+        "🛠 Admin Control Panel",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
+            ]
+          }
+        }
+      );
+    }
     // ===== STATS BUTTON (ASK DATE) =====
     if (text === "📊 Stats") {
       statsState[id] = true;
