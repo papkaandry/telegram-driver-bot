@@ -271,7 +271,7 @@ Total: $${amount.toFixed(2)}
 
         delete adminState[id];
 
-        return bot.sendMessage(msg.chat.id,"✅ Work added.");
+        return bot.sendMessage(msg.chat.id,"✅ Work added."
       }
 // ===== ADMIN CLEAR BY DATE OR ALL =====
 if (mode === "admin_clear_date") {
