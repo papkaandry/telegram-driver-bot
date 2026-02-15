@@ -10,6 +10,7 @@ export function setupBot(bot) {
   const adminState = {};
   const deleteState = {};
   const confirmState = {};
+  const statsState = {};
 
   // ================= START =================
   bot.onText(/\/start/, async (msg) => {
@@ -67,8 +68,15 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
 
-    // ===== USER STATS =====
+    // ===== STATS BUTTON (ASK DATE) =====
     if (text === "📊 Stats") {
+      statsState[id] = true;
+      return bot.sendMessage(msg.chat.id,"Enter start date YYYY-MM-DD");
+    }
+
+    if (statsState[id]) {
+
+      delete statsState[id];
 
       const result = await pool.query(
         `SELECT type,
@@ -76,12 +84,13 @@ export function setupBot(bot) {
                 COALESCE(SUM(amount),0) as total
          FROM work_logs
          WHERE telegram_id=$1
+         AND created_at >= $2
          GROUP BY type`,
-        [id]
+        [id, text]
       );
 
       let totalAll = 0;
-      let response = "📊 Your Stats:\n\n";
+      let response = `📊 Stats from ${text}\n\n`;
 
       result.rows.forEach(r=>{
         const amount = Number(r.total) || 0;
@@ -94,22 +103,9 @@ Total: $${amount.toFixed(2)}
 `;
       });
 
-      response += `🧾 TOTAL: $${(Number(totalAll) || 0).toFixed(2)}`;
+      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
 
       return bot.sendMessage(msg.chat.id,response);
-    }
-
-    // ===== ADMIN MENU =====
-    if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
-      return bot.sendMessage(msg.chat.id,"Admin Panel:",{
-        reply_markup:{
-          inline_keyboard:[
-            [{ text:"👥 Drivers", callback_data:"admin_drivers" }],
-            [{ text:"📧 Send To All", callback_data:"email_all" }],
-            [{ text:"🧹 Delete ALL Work Logs", callback_data:"delete_all_confirm" }]
-          ]
-        }
-      });
     }
 
     // ===== WORK BUTTONS =====
@@ -207,6 +203,7 @@ Total: $${amount.toFixed(2)}
         return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount.toFixed(2)}`);
       }
 
+      // ===== FIX EDIT RATES =====
       if (mode === "edit_rates") {
 
         const [otr, local, boise] = text.split(" ").map(Number);
@@ -216,12 +213,34 @@ Total: $${amount.toFixed(2)}
           `UPDATE users
            SET otr_rate=$1, local_rate=$2, boise_rate=$3
            WHERE telegram_id=$4`,
-          [otr || 0, local || 0, boise || 0, driverId]
+          [Number(otr)||0, Number(local)||0, Number(boise)||0, driverId]
         );
 
         delete editTarget[id];
 
         return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
+      }
+
+      // ===== ADMIN ADD VALUE =====
+      if (mode === "admin_add_value") {
+        adminState[id].value = Number(text)||0;
+        waitingInput[id] = "admin_add_date";
+        return bot.sendMessage(msg.chat.id,"Enter date YYYY-MM-DD");
+      }
+
+      if (mode === "admin_add_date") {
+
+        const s = adminState[id];
+
+        await pool.query(
+          `INSERT INTO work_logs (telegram_id,type,value,amount,created_at)
+           VALUES ($1,$2,$3,$3,$4)`,
+          [s.driverId, s.type, s.value, text]
+        );
+
+        delete adminState[id];
+
+        return bot.sendMessage(msg.chat.id,"✅ Work added.");
       }
     }
 
@@ -262,6 +281,7 @@ Total: $${amount.toFixed(2)}
             inline_keyboard:[
               [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
               [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
+              [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
               [{ text:"🧹 Clear Work", callback_data:`clear_${driverId}` }],
               [
                 { text:"✅ Approve", callback_data:`approve_${driverId}` },
@@ -272,6 +292,41 @@ Total: $${amount.toFixed(2)}
           }
         }
       );
+    }
+
+    // ===== EDIT RATES BUTTON =====
+    if (data.startsWith("rates_")) {
+      editTarget[id] = data.split("_")[1];
+      waitingInput[id] = "edit_rates";
+      return bot.sendMessage(query.message.chat.id,
+        "Enter rates:\nOTR Local Boise\nExample:\n0.70 30 650");
+    }
+
+    // ===== ADD WORK BUTTON =====
+    if (data.startsWith("addwork_")) {
+
+      const driverId = data.split("_")[1];
+      adminState[id] = { driverId };
+
+      return bot.sendMessage(query.message.chat.id,
+        "Select type:",
+        {
+          reply_markup:{
+            inline_keyboard:[
+              [{ text:"OTR", callback_data:"type_otr" }],
+              [{ text:"Local", callback_data:"type_local" }],
+              [{ text:"Boise", callback_data:"type_boise" }],
+              [{ text:"Boise Custom", callback_data:"type_boise_custom" }]
+            ]
+          }
+        }
+      );
+    }
+
+    if (data.startsWith("type_")) {
+      adminState[id].type = data.replace("type_","");
+      waitingInput[id] = "admin_add_value";
+      return bot.sendMessage(query.message.chat.id,"Enter value:");
     }
 
     // ===== ADMIN STATS =====
@@ -291,7 +346,7 @@ Total: $${amount.toFixed(2)}
       let response = "📊 Driver Stats:\n\n";
 
       result.rows.forEach(r=>{
-        const amount = Number(r.total) || 0;
+        const amount = Number(r.total)||0;
         totalAll += amount;
 
         response += `${r.type}
@@ -301,65 +356,9 @@ Total: $${amount.toFixed(2)}
 `;
       });
 
-      response += `🧾 TOTAL: $${(Number(totalAll) || 0).toFixed(2)}`;
+      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
 
       return bot.sendMessage(query.message.chat.id,response);
-    }
-
-    // ===== CLEAR DRIVER WORK =====
-    if (data.startsWith("clear_")) {
-
-      const driverId = data.split("_")[1];
-
-      confirmState[id] = driverId;
-
-      return bot.sendMessage(query.message.chat.id,
-        "⚠ Confirm clear work?",
-        {
-          reply_markup:{
-            inline_keyboard:[
-              [{ text:"✅ Confirm", callback_data:"confirm_clear" }],
-              [{ text:"❌ Cancel", callback_data:"cancel_action" }]
-            ]
-          }
-        }
-      );
-    }
-
-    if (data === "confirm_clear") {
-
-      const driverId = confirmState[id];
-
-      await pool.query(
-        `DELETE FROM work_logs WHERE telegram_id=$1`,
-        [driverId]
-      );
-
-      delete confirmState[id];
-
-      return bot.sendMessage(query.message.chat.id,"🧹 Work cleared.");
-    }
-
-    if (data.startsWith("approve_")) {
-      const driverId = data.split("_")[1];
-
-      await pool.query(
-        `UPDATE users SET approved=true WHERE telegram_id=$1`,
-        [driverId]
-      );
-
-      return bot.sendMessage(query.message.chat.id,"✅ Approved.");
-    }
-
-    if (data.startsWith("block_")) {
-      const driverId = data.split("_")[1];
-
-      await pool.query(
-        `UPDATE users SET approved=false WHERE telegram_id=$1`,
-        [driverId]
-      );
-
-      return bot.sendMessage(query.message.chat.id,"❌ Blocked.");
     }
 
     if (data === "cancel_action") {
