@@ -45,8 +45,26 @@ export function setupBot(bot) {
       [id]
     );
 
-    if (!rows[0]?.approved)
-      return bot.sendMessage(msg.chat.id,"⏳ Waiting for admin approval.");
+  if (!rows[0]?.approved) {
+
+  // уведомляем админа о новом драйвере
+  await bot.sendMessage(
+    ADMIN_ID,
+    `🆕 New driver request:\n\nName: ${name}\nID: ${id}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Approve", callback_data: `approve_${id}` },
+            { text: "❌ Block", callback_data: `block_${id}` }
+          ]
+        ]
+      }
+    }
+  );
+
+  return bot.sendMessage(msg.chat.id,"⏳ Waiting for admin approval.");
+}
 
     return bot.sendMessage(msg.chat.id, "Driver Panel", {
       reply_markup: {
@@ -280,6 +298,35 @@ Total: $${amount.toFixed(2)}
         "👥 Drivers:",
         { reply_markup:{ inline_keyboard: keyboard } }
       );
+    }
+        // ===== APPROVE DRIVER =====
+    if (data.startsWith("approve_")) {
+
+      const driverId = data.split("_")[1];
+
+      await pool.query(
+        `UPDATE users SET approved=true WHERE telegram_id=$1`,
+        [driverId]
+      );
+
+      await bot.sendMessage(driverId,"✅ You have been approved!");
+
+      return bot.sendMessage(query.message.chat.id,"Driver approved.");
+    }
+
+    // ===== BLOCK DRIVER =====
+    if (data.startsWith("block_")) {
+
+      const driverId = data.split("_")[1];
+
+      await pool.query(
+        `UPDATE users SET approved=false WHERE telegram_id=$1`,
+        [driverId]
+      );
+
+      await bot.sendMessage(driverId,"❌ You were blocked by admin.");
+
+      return bot.sendMessage(query.message.chat.id,"Driver blocked.");
     }
 
     // ===== MANAGE DRIVER =====
