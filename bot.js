@@ -8,8 +8,6 @@ export function setupBot(bot) {
   const waitingInput = {};
   const editTarget = {};
   const adminState = {};
-  const deleteState = {};
-  const confirmState = {};
   const statsState = {};
 
   // ================= START =================
@@ -26,18 +24,7 @@ export function setupBot(bot) {
     );
 
     if (id === ADMIN_ID) {
-      return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
-        reply_markup: {
-          keyboard: [
-            [{ text: "🛠 Admin Menu" }],
-            [{ text: "🚛 OTR" }],
-            [{ text: "🏙 Local" }],
-            [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-            [{ text: "📊 Stats" }]
-          ],
-          resize_keyboard: true
-        }
-      });
+      return showAdminKeyboard(bot, msg.chat.id);
     }
 
     const { rows } = await pool.query(
@@ -48,17 +35,7 @@ export function setupBot(bot) {
     if (!rows[0]?.approved)
       return bot.sendMessage(msg.chat.id,"⏳ Waiting for admin approval.");
 
-    return bot.sendMessage(msg.chat.id, "Driver Panel", {
-      reply_markup: {
-        keyboard: [
-          [{ text: "🚛 OTR" }],
-          [{ text: "🏙 Local" }],
-          [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-          [{ text: "📊 Stats" }]
-        ],
-        resize_keyboard: true
-      }
-    });
+    return showDriverKeyboard(bot, msg.chat.id);
   });
 
   // ================= MESSAGE =================
@@ -68,22 +45,19 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
 
-    // ===== FIX ADMIN MENU BUTTON =====
+    // ===== ADMIN MENU BUTTON =====
     if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
-
-      return bot.sendMessage(msg.chat.id,
-        "🛠 Admin Control Panel",
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
-            ]
-          }
+      clearStates(id);
+      return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
+          ]
         }
-      );
+      });
     }
 
-    // ===== STATS BUTTON (ASK DATE) =====
+    // ===== STATS BUTTON =====
     if (text === "📊 Stats") {
       statsState[id] = true;
       return bot.sendMessage(msg.chat.id,"Enter start date YYYY-MM-DD");
@@ -113,9 +87,7 @@ export function setupBot(bot) {
 
         response += `${r.type}
 Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
+Total: $${amount.toFixed(2)}\n\n`;
       });
 
       response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
@@ -231,7 +203,6 @@ Total: $${amount.toFixed(2)}
         );
 
         delete editTarget[id];
-
         return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
       }
 
@@ -293,11 +264,6 @@ Total: $${amount.toFixed(2)}
               [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
               [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
               [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
-              [{ text:"🧹 Clear Work", callback_data:`clear_${driverId}` }],
-              [
-                { text:"✅ Approve", callback_data:`approve_${driverId}` },
-                { text:"❌ Block", callback_data:`block_${driverId}` }
-              ],
               [{ text:"❌ Cancel", callback_data:"cancel_action" }]
             ]
           }
@@ -305,10 +271,54 @@ Total: $${amount.toFixed(2)}
       );
     }
 
+    if (data.startsWith("rates_")) {
+      editTarget[id] = data.split("_")[1];
+      waitingInput[id] = "edit_rates";
+      return bot.sendMessage(query.message.chat.id,
+        "Enter rates:\nOTR Local Boise\nExample:\n0.70 30 650");
+    }
+
     if (data === "cancel_action") {
       return bot.sendMessage(query.message.chat.id,"❌ Cancelled.");
     }
 
   });
+
+  // ================= HELPERS =================
+  function showAdminKeyboard(bot, chatId) {
+    return bot.sendMessage(chatId, "👑 Admin Panel", {
+      reply_markup: {
+        keyboard: [
+          [{ text: "🛠 Admin Menu" }],
+          [{ text: "🚛 OTR" }],
+          [{ text: "🏙 Local" }],
+          [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+          [{ text: "📊 Stats" }]
+        ],
+        resize_keyboard: true
+      }
+    });
+  }
+
+  function showDriverKeyboard(bot, chatId) {
+    return bot.sendMessage(chatId, "Driver Panel", {
+      reply_markup: {
+        keyboard: [
+          [{ text: "🚛 OTR" }],
+          [{ text: "🏙 Local" }],
+          [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+          [{ text: "📊 Stats" }]
+        ],
+        resize_keyboard: true
+      }
+    });
+  }
+
+  function clearStates(id) {
+    delete waitingInput[id];
+    delete editTarget[id];
+    delete adminState[id];
+    delete statsState[id];
+  }
 
 }
