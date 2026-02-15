@@ -370,8 +370,6 @@ if (mode === "admin_clear_date") {
         }
       );
     }
-      );
-    }
 
     // ===== CLEAR DRIVER WORK (ASK DATE) =====
     if (data.startsWith("clear_")) {
