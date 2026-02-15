@@ -88,17 +88,18 @@ export function setupBot(bot) {
     // ===== ADMIN MENU BUTTON FIX =====
     if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
 
-      return bot.sendMessage(msg.chat.id,
-        "🛠 Admin Control Panel",
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
-            ]
-          }
-        }
-      );
+  return bot.sendMessage(msg.chat.id,
+    "🛠 Admin Control Panel",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "👥 Drivers", callback_data: "admin_drivers" }],
+          [{ text: "📁 Save Today Excel", callback_data: "save_today_excel" }]
+        ]
+      }
     }
+  );
+}
     // ===== STATS BUTTON (ASK DATE) =====
     if (text === "📊 Stats") {
       statsState[id] = true;
