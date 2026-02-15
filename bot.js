@@ -273,27 +273,38 @@ Total: $${amount.toFixed(2)}
 
         return bot.sendMessage(msg.chat.id,"✅ Work added.");
       }
-      // ===== ADMIN CLEAR BY DATE =====
+// ===== ADMIN CLEAR BY DATE OR ALL =====
 if (mode === "admin_clear_date") {
 
   const driverId = deleteState[id];
-  const date = text;
+  const input = text.trim().toUpperCase();
 
+  // 🔥 УДАЛИТЬ ВСЁ
+  if (input === "ALL") {
+
+    await pool.query(
+      `DELETE FROM work_logs
+       WHERE telegram_id=$1`,
+      [driverId]
+    );
+
+    delete deleteState[id];
+
+    return bot.sendMessage(msg.chat.id,"🧹 All work deleted for this driver.");
+  }
+
+  // 🗓 УДАЛИТЬ ПО ДАТЕ
   await pool.query(
     `DELETE FROM work_logs
      WHERE telegram_id=$1
      AND DATE(created_at) = $2`,
-    [driverId, date]
+    [driverId, input]
   );
 
   delete deleteState[id];
 
   return bot.sendMessage(msg.chat.id,"🧹 Work deleted for that date.");
-}
-    }
-
-  });
-
+};
   // ================= CALLBACK =================
   bot.on('callback_query', async (query) => {
 
