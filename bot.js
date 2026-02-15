@@ -273,6 +273,23 @@ Total: $${amount.toFixed(2)}
 
         return bot.sendMessage(msg.chat.id,"✅ Work added.");
       }
+      // ===== ADMIN CLEAR BY DATE =====
+if (mode === "admin_clear_date") {
+
+  const driverId = deleteState[id];
+  const date = text;
+
+  await pool.query(
+    `DELETE FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) = $2`,
+    [driverId, date]
+  );
+
+  delete deleteState[id];
+
+  return bot.sendMessage(msg.chat.id,"🧹 Work deleted for that date.");
+}
     }
 
   });
