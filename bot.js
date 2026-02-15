@@ -254,7 +254,7 @@ Total: $${amount.toFixed(2)}
 
       // ===== ADMIN ADD VALUE =====
       if (mode === "admin_add_value") {
-        adminState[id].value = Number(text)||0;
+        adminState[id].value = Number(text) || 0;
         waitingInput[id] = "admin_add_date";
         return bot.sendMessage(msg.chat.id,"Enter date YYYY-MM-DD");
       }
@@ -273,44 +273,37 @@ Total: $${amount.toFixed(2)}
 
         return bot.sendMessage(msg.chat.id,"✅ Work added.");
       }
+
+      // ===== ADMIN CLEAR BY DATE OR ALL =====
+      if (mode === "admin_clear_date") {
+
+        const driverId = deleteState[id];
+        const input = text.trim().toUpperCase();
+
+        if (input === "ALL") {
+
+          await pool.query(
+            `DELETE FROM work_logs WHERE telegram_id=$1`,
+            [driverId]
+          );
+
+          delete deleteState[id];
+
+          return bot.sendMessage(msg.chat.id,"🧹 All work deleted for this driver.");
+        }
+
+        await pool.query(
+          `DELETE FROM work_logs
+           WHERE telegram_id=$1
+           AND DATE(created_at) = $2`,
+          [driverId, input]
+        );
+
+        delete deleteState[id];
+
+        return bot.sendMessage(msg.chat.id,"🧹 Work deleted for that date.");
+      }
     }
-  });
-// ===== ADMIN CLEAR BY DATE OR ALL =====
-if (mode === "admin_clear_date") {
-
-  const driverId = deleteState[id];
-  const input = text.trim().toUpperCase();
-
-  // 🔥 УДАЛИТЬ ВСЁ
-  if (input === "ALL") {
-
-    await pool.query(
-      `DELETE FROM work_logs
-       WHERE telegram_id=$1`,
-      [driverId]
-    );
-
-    delete deleteState[id];
-
-    return bot.sendMessage(msg.chat.id,"🧹 All work deleted for this driver.");
-  }
-
-  // 🗓 УДАЛИТЬ ПО ДАТЕ
-  await pool.query(
-    `DELETE FROM work_logs
-     WHERE telegram_id=$1
-     AND DATE(created_at) = $2`,
-    [driverId, input]
-  );
-
-  delete deleteState[id];
-
-  return bot.sendMessage(msg.chat.id,"🧹 Work deleted for that date.");
-}
-            }
-
-    }
-
   });
   // ================= CALLBACK =================
   bot.on('callback_query', async (query) => {
