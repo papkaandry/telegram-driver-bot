@@ -68,15 +68,15 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
 
-    // ✅ ===== FIX ADMIN MENU BUTTON =====
+    // ===== FIX ADMIN MENU BUTTON =====
     if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
+
       return bot.sendMessage(msg.chat.id,
-        "⚙️ Admin Panel",
+        "🛠 Admin Control Panel",
         {
-          reply_markup:{
-            inline_keyboard:[
-              [{ text:"👥 Drivers", callback_data:"admin_drivers" }],
-              [{ text:"❌ Cancel", callback_data:"cancel_action" }]
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "👥 Drivers", callback_data: "admin_drivers" }]
             ]
           }
         }
@@ -278,6 +278,30 @@ Total: $${amount.toFixed(2)}
       return bot.sendMessage(query.message.chat.id,
         "👥 Drivers:",
         { reply_markup:{ inline_keyboard: keyboard } }
+      );
+    }
+
+    if (data.startsWith("manage_")) {
+
+      const driverId = data.split("_")[1];
+
+      return bot.sendMessage(query.message.chat.id,
+        `Manage Driver`,
+        {
+          reply_markup:{
+            inline_keyboard:[
+              [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
+              [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
+              [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
+              [{ text:"🧹 Clear Work", callback_data:`clear_${driverId}` }],
+              [
+                { text:"✅ Approve", callback_data:`approve_${driverId}` },
+                { text:"❌ Block", callback_data:`block_${driverId}` }
+              ],
+              [{ text:"❌ Cancel", callback_data:"cancel_action" }]
+            ]
+          }
+        }
       );
     }
 
