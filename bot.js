@@ -273,6 +273,8 @@ Total: $${amount.toFixed(2)}
 
         return bot.sendMessage(msg.chat.id,"✅ Work added.");
       }
+    }
+  });
 // ===== ADMIN CLEAR BY DATE OR ALL =====
 if (mode === "admin_clear_date") {
 
