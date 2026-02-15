@@ -93,7 +93,7 @@ Total: $${amount.toFixed(2)}
 `;
       });
 
-      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+      response += `🧾 TOTAL: $${(Number(totalAll) || 0).toFixed(2)}`;
 
       return bot.sendMessage(msg.chat.id, response);
     }
@@ -207,50 +207,32 @@ Total: $${amount.toFixed(2)}
         return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount.toFixed(2)}`);
       }
 
-      if (mode === "edit_rates") {
-        const [otr, local, boise] = text.split(" ").map(Number);
-        const driverId = editTarget[id];
-
-        await pool.query(
-          `UPDATE users
-           SET otr_rate=$1, local_rate=$2, boise_rate=$3
-           WHERE telegram_id=$4`,
-          [otr || 0, local || 0, boise || 0, driverId]
-        );
-
-        delete editTarget[id];
-        return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
-      }
-
-      if (mode === "admin_add_value") {
-        adminState[id].value = Number(text) || 0;
-        waitingInput[id] = "admin_add_date";
-        return bot.sendMessage(msg.chat.id,"Enter date YYYY-MM-DD");
-      }
-
-      if (mode === "admin_add_date") {
-        const s = adminState[id];
-
-        await pool.query(
-          `INSERT INTO work_logs (telegram_id,type,value,amount,created_at)
-           VALUES ($1,$2,$3,$3,$4)`,
-          [s.driverId, s.type, s.value, text]
-        );
-
-        delete adminState[id];
-        return bot.sendMessage(msg.chat.id,"✅ Work added.");
-      }
-
       if (mode === "delete_by_date") {
         const [from, to] = text.split(" ");
+
+        const result = await pool.query(
+          `SELECT COALESCE(SUM(amount),0) as total
+           FROM work_logs
+           WHERE telegram_id=$1
+           AND created_at BETWEEN $2 AND $3`,
+          [deleteState[id], from, to]
+        );
+
+        const total = Number(result.rows[0]?.total) || 0;
+
         await pool.query(
           `DELETE FROM work_logs
            WHERE telegram_id=$1
            AND created_at BETWEEN $2 AND $3`,
           [deleteState[id], from, to]
         );
+
         delete deleteState[id];
-        return bot.sendMessage(msg.chat.id,"🗑 Logs deleted by date.");
+
+        return bot.sendMessage(msg.chat.id,
+          `🗑 Logs deleted.
+🧾 TOTAL for period: $${total.toFixed(2)}`
+        );
       }
     }
 
@@ -264,7 +246,24 @@ Total: $${amount.toFixed(2)}
 
     if (id !== ADMIN_ID) return;
 
-    // ================= ADMIN VIEW STATS =================
+    // ===== ADMIN DRIVER LIST =====
+    if (data === "admin_drivers") {
+
+      const { rows } = await pool.query(
+        `SELECT telegram_id, name FROM users`
+      );
+
+      const keyboard = rows.map(u => ([
+        { text: u.name, callback_data: `view_${u.telegram_id}` }
+      ]));
+
+      return bot.sendMessage(query.message.chat.id,
+        "👥 Drivers:",
+        { reply_markup: { inline_keyboard: keyboard } }
+      );
+    }
+
+    // ===== ADMIN VIEW STATS =====
     if (data.startsWith("view_")) {
 
       const driverId = data.split("_")[1];
@@ -292,12 +291,37 @@ Total: $${amount.toFixed(2)}
 `;
       });
 
-      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+      response += `🧾 TOTAL: $${(Number(totalAll) || 0).toFixed(2)}`;
 
-      return bot.sendMessage(query.message.chat.id,response);
+      return bot.sendMessage(query.message.chat.id,response,{
+        reply_markup:{
+          inline_keyboard:[
+            [
+              { text:"🧹 Clear Driver Work", callback_data:`clear_${driverId}` },
+              { text:"❌ Cancel", callback_data:"cancel_action" }
+            ]
+          ]
+        }
+      });
     }
 
-    // ================= END =================
+    // ===== CLEAR DRIVER WORK =====
+    if (data.startsWith("clear_")) {
+
+      const driverId = data.split("_")[1];
+
+      await pool.query(
+        `DELETE FROM work_logs WHERE telegram_id=$1`,
+        [driverId]
+      );
+
+      return bot.sendMessage(query.message.chat.id,"🧹 Driver work cleared.");
+    }
+
+    if (data === "cancel_action") {
+      return bot.sendMessage(query.message.chat.id,"❌ Cancelled.");
+    }
+
   });
 
 }
