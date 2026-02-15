@@ -313,6 +313,51 @@ Total: $${amount.toFixed(2)}
     const data = query.data;
 
     if (id !== ADMIN_ID) return;
+    // ===== SAVE TODAY EXCEL =====
+if (data === "save_today_excel") {
+
+  const today = new Date().toISOString().slice(0,10);
+
+  const { rows } = await pool.query(
+    `SELECT u.name,
+            w.type,
+            w.value,
+            w.amount,
+            DATE(w.created_at) as date
+     FROM work_logs w
+     JOIN users u ON u.telegram_id = w.telegram_id
+     WHERE DATE(w.created_at) = $1
+     ORDER BY u.name`,
+    [today]
+  );
+
+  if (rows.length === 0) {
+    return bot.sendMessage(query.message.chat.id,"No data for today.");
+  }
+
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Today Report");
+
+  worksheet.columns = [
+    { header: "Driver", key: "name", width: 20 },
+    { header: "Type", key: "type", width: 15 },
+    { header: "Value", key: "value", width: 15 },
+    { header: "Amount", key: "amount", width: 15 },
+    { header: "Date", key: "date", width: 15 }
+  ];
+
+  rows.forEach(r => {
+    worksheet.addRow(r);
+  });
+
+  const filePath = `/tmp/report_${today}.xlsx`;
+  await workbook.xlsx.writeFile(filePath);
+
+  await bot.sendDocument(query.message.chat.id, filePath);
+
+  return;
+}
 
     // ===== DRIVERS LIST =====
     if (data === "admin_drivers") {
