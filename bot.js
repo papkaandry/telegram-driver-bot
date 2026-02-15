@@ -68,6 +68,21 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
 
+    // ✅ ===== FIX ADMIN MENU BUTTON =====
+    if (text === "🛠 Admin Menu" && id === ADMIN_ID) {
+      return bot.sendMessage(msg.chat.id,
+        "⚙️ Admin Panel",
+        {
+          reply_markup:{
+            inline_keyboard:[
+              [{ text:"👥 Drivers", callback_data:"admin_drivers" }],
+              [{ text:"❌ Cancel", callback_data:"cancel_action" }]
+            ]
+          }
+        }
+      );
+    }
+
     // ===== STATS BUTTON (ASK DATE) =====
     if (text === "📊 Stats") {
       statsState[id] = true;
@@ -203,7 +218,6 @@ Total: $${amount.toFixed(2)}
         return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount.toFixed(2)}`);
       }
 
-      // ===== FIX EDIT RATES =====
       if (mode === "edit_rates") {
 
         const [otr, local, boise] = text.split(" ").map(Number);
@@ -221,7 +235,6 @@ Total: $${amount.toFixed(2)}
         return bot.sendMessage(msg.chat.id,"✅ Rates updated.");
       }
 
-      // ===== ADMIN ADD VALUE =====
       if (mode === "admin_add_value") {
         adminState[id].value = Number(text)||0;
         waitingInput[id] = "admin_add_date";
@@ -254,7 +267,6 @@ Total: $${amount.toFixed(2)}
 
     if (id !== ADMIN_ID) return;
 
-    // ===== DRIVERS LIST =====
     if (data === "admin_drivers") {
 
       const { rows } = await pool.query(`SELECT telegram_id,name FROM users`);
@@ -267,98 +279,6 @@ Total: $${amount.toFixed(2)}
         "👥 Drivers:",
         { reply_markup:{ inline_keyboard: keyboard } }
       );
-    }
-
-    // ===== MANAGE DRIVER =====
-    if (data.startsWith("manage_")) {
-
-      const driverId = data.split("_")[1];
-
-      return bot.sendMessage(query.message.chat.id,
-        `Manage Driver`,
-        {
-          reply_markup:{
-            inline_keyboard:[
-              [{ text:"📊 Stats", callback_data:`view_${driverId}` }],
-              [{ text:"💰 Edit Rates", callback_data:`rates_${driverId}` }],
-              [{ text:"➕ Add Work", callback_data:`addwork_${driverId}` }],
-              [{ text:"🧹 Clear Work", callback_data:`clear_${driverId}` }],
-              [
-                { text:"✅ Approve", callback_data:`approve_${driverId}` },
-                { text:"❌ Block", callback_data:`block_${driverId}` }
-              ],
-              [{ text:"❌ Cancel", callback_data:"cancel_action" }]
-            ]
-          }
-        }
-      );
-    }
-
-    // ===== EDIT RATES BUTTON =====
-    if (data.startsWith("rates_")) {
-      editTarget[id] = data.split("_")[1];
-      waitingInput[id] = "edit_rates";
-      return bot.sendMessage(query.message.chat.id,
-        "Enter rates:\nOTR Local Boise\nExample:\n0.70 30 650");
-    }
-
-    // ===== ADD WORK BUTTON =====
-    if (data.startsWith("addwork_")) {
-
-      const driverId = data.split("_")[1];
-      adminState[id] = { driverId };
-
-      return bot.sendMessage(query.message.chat.id,
-        "Select type:",
-        {
-          reply_markup:{
-            inline_keyboard:[
-              [{ text:"OTR", callback_data:"type_otr" }],
-              [{ text:"Local", callback_data:"type_local" }],
-              [{ text:"Boise", callback_data:"type_boise" }],
-              [{ text:"Boise Custom", callback_data:"type_boise_custom" }]
-            ]
-          }
-        }
-      );
-    }
-
-    if (data.startsWith("type_")) {
-      adminState[id].type = data.replace("type_","");
-      waitingInput[id] = "admin_add_value";
-      return bot.sendMessage(query.message.chat.id,"Enter value:");
-    }
-
-    // ===== ADMIN STATS =====
-    if (data.startsWith("view_")) {
-
-      const driverId = data.split("_")[1];
-
-      const result = await pool.query(
-        `SELECT type,COUNT(*) as count,COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id=$1
-         GROUP BY type`,
-        [driverId]
-      );
-
-      let totalAll = 0;
-      let response = "📊 Driver Stats:\n\n";
-
-      result.rows.forEach(r=>{
-        const amount = Number(r.total)||0;
-        totalAll += amount;
-
-        response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
-      });
-
-      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
-
-      return bot.sendMessage(query.message.chat.id,response);
     }
 
     if (data === "cancel_action") {
