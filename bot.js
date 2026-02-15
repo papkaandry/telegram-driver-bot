@@ -353,7 +353,22 @@ Total: $${amount.toFixed(2)}
         }
       );
     }
+      );
+    }
 
+    // ===== CLEAR DRIVER WORK (ASK DATE) =====
+    if (data.startsWith("clear_")) {
+
+      const driverId = data.split("_")[1];
+
+      deleteState[id] = driverId;
+      waitingInput[id] = "admin_clear_date";
+
+      return bot.sendMessage(
+        query.message.chat.id,
+        "Enter date to delete (YYYY-MM-DD):"
+      );
+    }
     // ===== EDIT RATES BUTTON =====
     if (data.startsWith("rates_")) {
       editTarget[id] = data.split("_")[1];
