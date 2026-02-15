@@ -304,7 +304,12 @@ if (mode === "admin_clear_date") {
   delete deleteState[id];
 
   return bot.sendMessage(msg.chat.id,"🧹 Work deleted for that date.");
-};
+}
+            }
+
+    }
+
+  });
   // ================= CALLBACK =================
   bot.on('callback_query', async (query) => {
 
