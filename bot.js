@@ -11,6 +11,49 @@ export function setupBot(bot) {
   const deleteState = {};
   const confirmState = {};
   const statsState = {};
+  function generateCalendar(year, month) {
+  const keyboard = [];
+  const date = new Date(year, month, 1);
+  const monthName = date.toLocaleString("en-US", { month: "long" });
+
+  keyboard.push([
+    { text: "⬅", callback_data: `cal_prev_${year}_${month}` },
+    { text: `${monthName} ${year}`, callback_data: "ignore" },
+    { text: "➡", callback_data: `cal_next_${year}_${month}` }
+  ]);
+
+  const daysRow = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+  keyboard.push(daysRow.map(d => ({ text: d, callback_data: "ignore" })));
+
+  const firstDay = (date.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  let row = [];
+
+  for (let i = 0; i < firstDay; i++) {
+    row.push({ text: " ", callback_data: "ignore" });
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+
+    const fullDate = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+
+    row.push({
+      text: String(day),
+      callback_data: `cal_day_${fullDate}`
+    });
+
+    if (row.length === 7) {
+      keyboard.push(row);
+      row = [];
+    }
+  }
+
+  if (row.length) keyboard.push(row);
+
+  return keyboard;
+}
+
 
   // ================= START =================
   bot.onText(/\/start/, async (msg) => {
@@ -143,48 +186,6 @@ if (id !== ADMIN_ID) {
       }
     }
   );
-}
-
-    // ===== HANDLE CUSTOM PERIOD INPUT =====
-if (statsState[id] === "awaiting_period") {
-
-  delete statsState[id];
-
-  const parts = text.split(" ");
-  if (parts.length !== 2) {
-    return bot.sendMessage(msg.chat.id,"❌ Wrong format.\nExample:\n2025-02-01 2025-02-15");
-  }
-
-  const [dateFrom, dateTo] = parts;
-
-  const { rows } = await pool.query(
-    `SELECT type,
-            COUNT(*) as count,
-            COALESCE(SUM(amount),0) as total
-     FROM work_logs
-     WHERE telegram_id=$1
-     AND DATE(created_at) BETWEEN $2 AND $3
-     GROUP BY type`,
-    [id, dateFrom, dateTo]
-  );
-
-  let totalAll = 0;
-  let response = `📊 Stats from ${dateFrom} to ${dateTo}\n\n`;
-
-  rows.forEach(r=>{
-    const amount = Number(r.total)||0;
-    totalAll += amount;
-
-    response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
-  });
-
-  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
-
-  return bot.sendMessage(msg.chat.id,response);
 }
 
     // ===== WORK BUTTONS =====
@@ -405,16 +406,106 @@ Total: $${amount.toFixed(2)}
 
 
 // ===== STATS: CUSTOM PERIOD =====
+// ===== OPEN CALENDAR =====
 if (data === "stats_period") {
 
-  statsState[id] = "awaiting_period";
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  statsState[id] = { step: 1, dates: [] };
 
   return bot.sendMessage(
     query.message.chat.id,
-    "Enter period:\nYYYY-MM-DD YYYY-MM-DD\n\nExample:\n2026-02-01 2026-02-15"
+    "📅 Select START date:",
+    {
+      reply_markup: {
+        inline_keyboard: generateCalendar(year, month)
+      }
+    }
   );
 }
 
+
+// ===== CALENDAR NAVIGATION =====
+if (data.startsWith("cal_prev_") || data.startsWith("cal_next_")) {
+
+  const parts = data.split("_");
+  let year = Number(parts[2]);
+  let month = Number(parts[3]);
+
+  if (data.startsWith("cal_prev_")) month--;
+  if (data.startsWith("cal_next_")) month++;
+
+  if (month < 0) { month = 11; year--; }
+  if (month > 11) { month = 0; year++; }
+
+  return bot.editMessageReplyMarkup(
+    { inline_keyboard: generateCalendar(year, month) },
+    { chat_id: query.message.chat.id, message_id: query.message.message_id }
+  );
+}
+
+
+// ===== DATE CLICK =====
+if (data.startsWith("cal_day_")) {
+
+  const selectedDate = data.replace("cal_day_", "");
+  const state = statsState[id];
+
+  if (!state) return;
+
+  state.dates.push(selectedDate);
+
+  if (state.step === 1) {
+    state.step = 2;
+
+    return bot.sendMessage(
+      query.message.chat.id,
+      "📅 Select END date:",
+      {
+        reply_markup: {
+          inline_keyboard: generateCalendar(
+            new Date(selectedDate).getFullYear(),
+            new Date(selectedDate).getMonth()
+          )
+        }
+      }
+    );
+  }
+
+  const [dateFrom, dateTo] = state.dates;
+  delete statsState[id];
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            COUNT(*) as count,
+            COALESCE(SUM(amount),0) as total
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) BETWEEN $2 AND $3
+     GROUP BY type`,
+    [id, dateFrom, dateTo]
+  );
+
+  let totalAll = 0;
+  let response = `📊 Stats from ${dateFrom} to ${dateTo}\n\n`;
+
+  rows.forEach(r=>{
+    const amount = Number(r.total)||0;
+    totalAll += amount;
+
+    response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
+  });
+
+  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+
+  return bot.sendMessage(query.message.chat.id,response);
+}
 
     // ===== SAVE TODAY EXCEL =====
 if (data === "save_today_excel") {
