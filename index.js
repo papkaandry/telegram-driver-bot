@@ -32,6 +32,10 @@ await initDB();
 setupBot(bot);
 
 console.log('Bot started');
+// 🧪 TEST GROUP MESSAGE
+bot.sendMessage("-1003778895658", "✅ TEST MESSAGE TO GROUP")
+  .then(() => console.log("Test message sent to group"))
+  .catch(err => console.log("Test error:", err.message));
 
 // ===== WEEKLY REPORT (Every Sunday 20:00 LA Time) =====
 // ===== WEEKLY EXCEL REPORT (Every Sunday 23:59 LA Time) =====
