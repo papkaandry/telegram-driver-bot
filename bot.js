@@ -386,34 +386,63 @@ if (data === "stats_month") {
     [id, firstDay]
   );
 
+  if (rows.length === 0) {
+    return bot.sendMessage(query.message.chat.id,
+      "📊 This month has no records yet.");
+  }
+
   let totalAll = 0;
-  let response = `📊 Stats for this month\n\n`;
+  let response = `📊 *STATS FOR THIS MONTH*\n\n`;
 
   rows.forEach(r => {
 
     const amount = Number(r.amount) || 0;
     totalAll += amount;
 
+    const formattedDate = new Date(r.date)
+      .toISOString()
+      .slice(0,10);
+
     let emoji = "📦";
+    let typeName = r.type.toUpperCase();
 
-    if (r.type === "otr") emoji = "🚛";
-    if (r.type === "local") emoji = "🏙";
-    if (r.type === "boise") emoji = "📍";
-    if (r.type === "boise_custom") emoji = "📍💰";
+    if (r.type === "otr") {
+      emoji = "🚛";
+      typeName = "OTR";
+    }
 
-    response += `📅 ${r.date}
-${emoji} ${r.type.toUpperCase()}
-Value: ${r.value}
-Amount: $${amount.toFixed(2)}
+    if (r.type === "local") {
+      emoji = "🏙";
+      typeName = "LOCAL";
+    }
+
+    if (r.type === "boise") {
+      emoji = "📍";
+      typeName = "BOISE";
+    }
+
+    if (r.type === "boise_custom") {
+      emoji = "📍💰";
+      typeName = "BOISE CUSTOM";
+    }
+
+    response += 
+`━━━━━━━━━━━━━━
+📅 ${formattedDate}
+${emoji} *${typeName}*
+📊 Value: ${r.value}
+💵 Amount: *$${amount.toFixed(2)}*
 
 `;
   });
 
-  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+  response += `━━━━━━━━━━━━━━
+🧾 *TOTAL: $${totalAll.toFixed(2)}*`;
 
-  return bot.sendMessage(query.message.chat.id,response);
+  return bot.sendMessage(query.message.chat.id, response, {
+    parse_mode: "Markdown"
+  });
 }
-
 // ===== OPEN CALENDAR =====
 if (data === "stats_period") {
 
@@ -465,13 +494,15 @@ if (data.startsWith("cal_day_")) {
 
   state.dates.push(selectedDate);
 
+  // ===== SELECT END DATE =====
   if (state.step === 1) {
     state.step = 2;
 
     return bot.sendMessage(
       query.message.chat.id,
-      "📅 Select END date:",
+      "📅 *Select END date:*",
       {
+        parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: generateCalendar(
             new Date(selectedDate).getFullYear(),
@@ -482,6 +513,7 @@ if (data.startsWith("cal_day_")) {
     );
   }
 
+  // ===== BOTH DATES SELECTED =====
   const [dateFrom, dateTo] = state.dates;
   delete statsState[id];
 
@@ -497,38 +529,63 @@ if (data.startsWith("cal_day_")) {
     [id, dateFrom, dateTo]
   );
 
+  if (rows.length === 0) {
+    return bot.sendMessage(query.message.chat.id,
+      `📊 No records found between\n${dateFrom} → ${dateTo}`);
+  }
+
   let totalAll = 0;
-  let response = `📊 Stats from ${dateFrom} to ${dateTo}\n\n`;
+  let response = `📊 *STATS FROM*\n${dateFrom} → ${dateTo}\n\n`;
 
   rows.forEach(r => {
 
     const amount = Number(r.amount) || 0;
     totalAll += amount;
 
+    const formattedDate = new Date(r.date)
+      .toISOString()
+      .slice(0,10);
+
     let emoji = "📦";
+    let typeName = r.type.toUpperCase();
 
-    if (r.type === "otr") emoji = "🚛";
-    if (r.type === "local") emoji = "🏙";
-    if (r.type === "boise") emoji = "📍";
-    if (r.type === "boise_custom") emoji = "📍💰";
+    if (r.type === "otr") {
+      emoji = "🚛";
+      typeName = "OTR";
+    }
 
-   const formattedDate = new Date(r.date)
-  .toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric"
-  });
+    if (r.type === "local") {
+      emoji = "🏙";
+      typeName = "LOCAL";
+    }
 
-response += `📅 ${formattedDate}
+    if (r.type === "boise") {
+      emoji = "📍";
+      typeName = "BOISE";
+    }
+
+    if (r.type === "boise_custom") {
+      emoji = "📍💰";
+      typeName = "BOISE CUSTOM";
+    }
+
+    response += 
+`━━━━━━━━━━━━━━
+📅 ${formattedDate}
+${emoji} *${typeName}*
+📊 Value: ${r.value}
+💵 Amount: *$${amount.toFixed(2)}*
+
 `;
-
   });
 
-  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+  response += `━━━━━━━━━━━━━━
+🧾 *TOTAL: $${totalAll.toFixed(2)}*`;
 
-  return bot.sendMessage(query.message.chat.id,response);
+  return bot.sendMessage(query.message.chat.id, response, {
+    parse_mode: "Markdown"
+  });
 }
-
     // ===== SAVE TODAY EXCEL =====
 if (data === "save_today_excel") {
 
