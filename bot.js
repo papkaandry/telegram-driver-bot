@@ -86,23 +86,32 @@ export function setupBot(bot) {
     const text = msg.text;
     if (!text) return;
       // ===== BLOCK CHECK =====
-  if (!rows[0]?.approved) {
-  return bot.sendMessage(
-    msg.chat.id,
-    "⛔ You are blocked.\n\nPlease contact the admin:",
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "📩 Contact Admin",
-              url: `tg://user?id=${ADMIN_ID}`
-            }
-          ]
-        ]
-      }
-    }
+  // ===== BLOCK CHECK =====
+if (id !== ADMIN_ID) {
+
+  const { rows: userRows } = await pool.query(
+    `SELECT approved FROM users WHERE telegram_id=$1`,
+    [id]
   );
+
+  if (!userRows[0]?.approved) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "⛔ You are blocked.\n\nPlease contact the admin:",
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "📩 Contact Admin",
+                url: `tg://user?id=${ADMIN_ID}`
+              }
+            ]
+          ]
+        }
+      }
+    );
+  }
 }
 
     // ===== ADMIN MENU BUTTON FIX =====
