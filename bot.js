@@ -388,20 +388,37 @@ if (data === "save_today_excel") {
       return bot.sendMessage(query.message.chat.id,"Driver approved.");
     }
 
-    // ===== BLOCK DRIVER =====
-    if (data.startsWith("block_")) {
+   // ===== BLOCK DRIVER =====
+if (data.startsWith("block_")) {
 
-      const driverId = data.split("_")[1];
+  const driverId = data.split("_")[1];
 
-      await pool.query(
-        `UPDATE users SET approved=false WHERE telegram_id=$1`,
-        [driverId]
-      );
+  await pool.query(
+    `UPDATE users SET approved=false WHERE telegram_id=$1`,
+    [driverId]
+  );
 
-      await bot.sendMessage(driverId,"❌ You were blocked by admin.");
-
-      return bot.sendMessage(query.message.chat.id,"Driver blocked.");
+  await bot.sendMessage(
+    driverId,
+    "⛔ You are blocked.\n\nPlease contact the admin:",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "📩 Contact Admin",
+              url: `tg://user?id=${ADMIN_ID}`
+            }
+          ]
+        ]
+      }
     }
+  );
+
+  return bot.sendMessage(query.message.chat.id,"Driver blocked.");
+}
+
+
 
     // ===== MANAGE DRIVER =====
     if (data.startsWith("manage_")) {
