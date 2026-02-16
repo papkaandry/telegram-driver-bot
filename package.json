@@ -13,6 +13,7 @@
     "pdfkit": "^0.14.0",
     "node-cron": "^3.0.3",
     "dotenv": "^16.4.5",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "node-telegram-bot-api-calendar": "^1.7.0"
   }
 }
