@@ -2,6 +2,8 @@ import { pool } from './db.js';
 import { sendMail } from './mail.js';
 
 const ADMIN_ID = "427968134";
+const GROUP_CHAT_ID = "-1003778895658";
+
 
 export function setupBot(bot) {
 
@@ -183,6 +185,8 @@ if (id !== ADMIN_ID) {
           [{ text: "📅 This Month", callback_data: "stats_month" }],
           [{ text: "🗓 This Week", callback_data: "stats_week" }],
           [{ text: "📆 Custom Period", callback_data: "stats_period" }]
+          [{ text: "📁 Send Weekly Excel", callback_data: "send_week_excel" }]
+  ]
         ]
       }
     }
@@ -653,48 +657,62 @@ ${emoji} *${typeName}*
     parse_mode: "Markdown"
   });
 }
-    // ===== SAVE TODAY EXCEL =====
-if (data === "save_today_excel") {
+   // ===== WEEKLY EXCEL EXPORT =====
+if (data === "send_week_excel") {
 
-  const today = new Date().toISOString().slice(0,10);
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+
+  const monday = new Date(now.setDate(diff));
+  const mondayStr = monday.toISOString().slice(0,10);
+
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+  const sundayStr = sunday.toISOString().slice(0,10);
 
   const { rows } = await pool.query(
-    `SELECT u.name,
-            w.type,
-            w.value,
-            w.amount,
-            DATE(w.created_at) as date
-     FROM work_logs w
-     JOIN users u ON u.telegram_id = w.telegram_id
-     WHERE DATE(w.created_at) = $1
-     ORDER BY u.name`,
-    [today]
+    `SELECT type,value,amount,DATE(created_at) as date
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) BETWEEN $2 AND $3
+     ORDER BY created_at`,
+    [id, mondayStr, sundayStr]
   );
 
   if (rows.length === 0) {
-    return bot.sendMessage(query.message.chat.id,"No data for today.");
+    return bot.sendMessage(query.message.chat.id,
+      "🗓 No data for this week.");
   }
 
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Today Report");
+  const worksheet = workbook.addWorksheet("Weekly Report");
 
   worksheet.columns = [
-    { header: "Driver", key: "name", width: 20 },
+    { header: "Date", key: "date", width: 15 },
     { header: "Type", key: "type", width: 15 },
     { header: "Value", key: "value", width: 15 },
-    { header: "Amount", key: "amount", width: 15 },
-    { header: "Date", key: "date", width: 15 }
+    { header: "Amount", key: "amount", width: 15 }
   ];
 
-  rows.forEach(r => {
-    worksheet.addRow(r);
-  });
+  rows.forEach(r => worksheet.addRow(r));
 
-  const filePath = `/tmp/report_${today}.xlsx`;
+  const filePath = `/tmp/weekly_${id}.xlsx`;
   await workbook.xlsx.writeFile(filePath);
 
-  await bot.sendDocument(query.message.chat.id, filePath);
+  const driverName = query.from.first_name;
+
+  const caption =
+`📁 WEEKLY REPORT
+👤 Driver: ${driverName}
+📅 ${mondayStr} → ${sundayStr}`;
+
+  // отправляем пользователю
+  await bot.sendDocument(query.message.chat.id, filePath, { caption });
+
+  // отправляем в группу
+  await bot.sendDocument(GROUP_CHAT_ID, filePath, { caption });
 
   return;
 }
