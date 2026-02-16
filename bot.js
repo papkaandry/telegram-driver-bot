@@ -181,6 +181,7 @@ if (id !== ADMIN_ID) {
       reply_markup: {
         inline_keyboard: [
           [{ text: "📅 This Month", callback_data: "stats_month" }],
+          [{ text: "🗓 This Week", callback_data: "stats_week" }],
           [{ text: "📆 Custom Period", callback_data: "stats_period" }]
         ]
       }
@@ -443,6 +444,72 @@ ${emoji} *${typeName}*
     parse_mode: "Markdown"
   });
 }
+  // ===== STATS: THIS WEEK =====
+if (data === "stats_week") {
+
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+
+  const monday = new Date(now.setDate(diff))
+    .toISOString()
+    .slice(0,10);
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            value,
+            amount,
+            DATE(created_at) as date
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) >= $2
+     ORDER BY created_at`,
+    [id, monday]
+  );
+
+  if (rows.length === 0) {
+    return bot.sendMessage(query.message.chat.id,
+      "🗓 No records for this week.");
+  }
+
+  let totalAll = 0;
+  let response = `🗓 *THIS WEEK STATS*\n\n`;
+
+  rows.forEach(r => {
+
+    const amount = Number(r.amount) || 0;
+    totalAll += amount;
+
+    const formattedDate = new Date(r.date)
+      .toISOString()
+      .slice(0,10);
+
+    let emoji = "📦";
+    let typeName = r.type.toUpperCase();
+
+    if (r.type === "otr") { emoji = "🚛"; typeName = "OTR"; }
+    if (r.type === "local") { emoji = "🏙"; typeName = "LOCAL"; }
+    if (r.type === "boise") { emoji = "📍"; typeName = "BOISE"; }
+    if (r.type === "boise_custom") { emoji = "📍💰"; typeName = "BOISE CUSTOM"; }
+
+    response += 
+`━━━━━━━━━━━━━━
+📅 ${formattedDate}
+${emoji} *${typeName}*
+📊 Value: ${r.value}
+💵 Amount: *$${amount.toFixed(2)}*
+
+`;
+  });
+
+  response += `━━━━━━━━━━━━━━
+🧾 *TOTAL: $${totalAll.toFixed(2)}*`;
+
+  return bot.sendMessage(query.message.chat.id, response, {
+    parse_mode: "Markdown"
+  });
+}
+
 // ===== OPEN CALENDAR =====
 if (data === "stats_period") {
 
