@@ -33,7 +33,7 @@ setupBot(bot);
 
 console.log('Bot started');
 // 🧪 TEST GROUP MESSAGE
-bot.sendMessage("--5111653088", "✅ TEST MESSAGE TO GROUP")
+bot.sendMessage("-5111653088", "✅ TEST MESSAGE TO GROUP")
   .then(() => console.log("Test message sent to group"))
   .catch(err => console.log("Test error:", err.message));
 
