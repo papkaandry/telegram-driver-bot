@@ -312,12 +312,16 @@ if (id !== ADMIN_ID) {
     }
   });
   // ================= CALLBACK =================
-  bot.on('callback_query', async (query) => {
+  const id = query.from.id.toString();
+const data = query.data;
 
-    const id = query.from.id.toString();
-    const data = query.data;
+// Allow stats for everyone
+if (data.startsWith("stats_")) {
+  // nothing here, just allow
+} else {
+  if (id !== ADMIN_ID) return;
+}
 
-    if (id !== ADMIN_ID) return;
     // ===== SAVE TODAY EXCEL =====
 if (data === "save_today_excel") {
 
