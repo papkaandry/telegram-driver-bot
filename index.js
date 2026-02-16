@@ -5,7 +5,6 @@ import { initDB, pool } from './db.js';
 import { setupBot } from './bot.js';
 import ExcelJS from "exceljs";
 
-await bot.sendMessage("-1003778895658", "Test message");
 
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
