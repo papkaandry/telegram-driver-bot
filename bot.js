@@ -2,7 +2,7 @@ import { pool } from './db.js';
 import { sendMail } from './mail.js';
 
 const ADMIN_ID = "427968134";
-const GROUP_CHAT_ID = "-1003778895658";
+const GROUP_CHAT_ID = "-511165308";
 
 
 export function setupBot(bot) {
