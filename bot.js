@@ -186,7 +186,6 @@ if (id !== ADMIN_ID) {
           [{ text: "🗓 This Week", callback_data: "stats_week" }],
           [{ text: "📆 Custom Period", callback_data: "stats_period" }],
           [{ text: "📁 Send Weekly Excel", callback_data: "send_week_excel" }]
-  ]
         ]
       }
     }
