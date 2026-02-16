@@ -184,7 +184,7 @@ if (id !== ADMIN_ID) {
         inline_keyboard: [
           [{ text: "📅 This Month", callback_data: "stats_month" }],
           [{ text: "🗓 This Week", callback_data: "stats_week" }],
-          [{ text: "📆 Custom Period", callback_data: "stats_period" }]
+          [{ text: "📆 Custom Period", callback_data: "stats_period" }],
           [{ text: "📁 Send Weekly Excel", callback_data: "send_week_excel" }]
   ]
         ]
