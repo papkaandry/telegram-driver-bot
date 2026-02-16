@@ -145,6 +145,48 @@ if (id !== ADMIN_ID) {
   );
 }
 
+    // ===== HANDLE CUSTOM PERIOD INPUT =====
+if (statsState[id] === "awaiting_period") {
+
+  delete statsState[id];
+
+  const parts = text.split(" ");
+  if (parts.length !== 2) {
+    return bot.sendMessage(msg.chat.id,"❌ Wrong format.\nExample:\n2025-02-01 2025-02-15");
+  }
+
+  const [dateFrom, dateTo] = parts;
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            COUNT(*) as count,
+            COALESCE(SUM(amount),0) as total
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) BETWEEN $2 AND $3
+     GROUP BY type`,
+    [id, dateFrom, dateTo]
+  );
+
+  let totalAll = 0;
+  let response = `📊 Stats from ${dateFrom} to ${dateTo}\n\n`;
+
+  rows.forEach(r=>{
+    const amount = Number(r.total)||0;
+    totalAll += amount;
+
+    response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
+  });
+
+  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+
+  return bot.sendMessage(msg.chat.id,response);
+}
+
     // ===== WORK BUTTONS =====
     const { rows } = await pool.query(
       `SELECT otr_rate, local_rate, boise_rate
@@ -322,6 +364,56 @@ bot.on('callback_query', async (query) => {
   if (!data.startsWith("stats_")) {
     if (id !== ADMIN_ID) return;
   }
+  
+// ===== STATS: THIS MONTH =====
+if (data === "stats_month") {
+
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+    .toISOString()
+    .slice(0,10);
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            COUNT(*) as count,
+            COALESCE(SUM(amount),0) as total
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) >= $2
+     GROUP BY type`,
+    [id, firstDay]
+  );
+
+  let totalAll = 0;
+  let response = `📊 Stats for this month\n\n`;
+
+  rows.forEach(r=>{
+    const amount = Number(r.total)||0;
+    totalAll += amount;
+
+    response += `${r.type}
+Count: ${r.count}
+Total: $${amount.toFixed(2)}
+
+`;
+  });
+
+  response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
+
+  return bot.sendMessage(query.message.chat.id,response);
+}
+
+
+// ===== STATS: CUSTOM PERIOD =====
+if (data === "stats_period") {
+
+  statsState[id] = "awaiting_period";
+
+  return bot.sendMessage(
+    query.message.chat.id,
+    "Enter period:\nYYYY-MM-DD YYYY-MM-DD\n\nExample:\n2026-02-01 2026-02-15"
+  );
+}
 
 
     // ===== SAVE TODAY EXCEL =====
