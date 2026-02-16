@@ -376,25 +376,35 @@ if (data === "stats_month") {
 
   const { rows } = await pool.query(
     `SELECT type,
-            COUNT(*) as count,
-            COALESCE(SUM(amount),0) as total
+            value,
+            amount,
+            DATE(created_at) as date
      FROM work_logs
      WHERE telegram_id=$1
      AND DATE(created_at) >= $2
-     GROUP BY type`,
+     ORDER BY created_at`,
     [id, firstDay]
   );
 
   let totalAll = 0;
   let response = `📊 Stats for this month\n\n`;
 
-  rows.forEach(r=>{
-    const amount = Number(r.total)||0;
+  rows.forEach(r => {
+
+    const amount = Number(r.amount) || 0;
     totalAll += amount;
 
-    response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
+    let emoji = "📦";
+
+    if (r.type === "otr") emoji = "🚛";
+    if (r.type === "local") emoji = "🏙";
+    if (r.type === "boise") emoji = "📍";
+    if (r.type === "boise_custom") emoji = "📍💰";
+
+    response += `📅 ${r.date}
+${emoji} ${r.type.toUpperCase()}
+Value: ${r.value}
+Amount: $${amount.toFixed(2)}
 
 `;
   });
@@ -404,8 +414,6 @@ Total: $${amount.toFixed(2)}
   return bot.sendMessage(query.message.chat.id,response);
 }
 
-
-// ===== STATS: CUSTOM PERIOD =====
 // ===== OPEN CALENDAR =====
 if (data === "stats_period") {
 
