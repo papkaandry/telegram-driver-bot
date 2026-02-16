@@ -512,12 +512,16 @@ if (data.startsWith("cal_day_")) {
     if (r.type === "boise") emoji = "📍";
     if (r.type === "boise_custom") emoji = "📍💰";
 
-    response += `📅 ${r.date}
-${emoji} ${r.type.toUpperCase()}
-Value: ${r.value}
-Amount: $${amount.toFixed(2)}
+   const formattedDate = new Date(r.date)
+  .toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
 
+response += `📅 ${formattedDate}
 `;
+
   });
 
   response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
