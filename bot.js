@@ -365,11 +365,14 @@ bot.on('callback_query', async (query) => {
   const id = query.from.id.toString();
   const data = query.data;
 
-  // Allow stats for everyone
-  if (!data.startsWith("stats_")) {
-    if (id !== ADMIN_ID) return;
-  }
-  
+  // Allow stats + weekly excel for everyone
+if (
+  !data.startsWith("stats_") &&
+  data !== "send_week_excel"
+) {
+  if (id !== ADMIN_ID) return;
+}
+
 // ===== STATS: THIS MONTH =====
 if (data === "stats_month") {
 
