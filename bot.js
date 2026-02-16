@@ -130,44 +130,20 @@ if (id !== ADMIN_ID) {
   );
 }
     // ===== STATS BUTTON (ASK DATE) =====
-    if (text === "📊 Stats") {
-      statsState[id] = true;
-      return bot.sendMessage(msg.chat.id,"Enter start date YYYY-MM-DD");
+  if (text === "📊 Stats") {
+  return bot.sendMessage(
+    msg.chat.id,
+    "📊 Select stats type:",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "📅 This Month", callback_data: "stats_month" }],
+          [{ text: "📆 Custom Period", callback_data: "stats_period" }]
+        ]
+      }
     }
-
-    if (statsState[id]) {
-
-      delete statsState[id];
-
-      const result = await pool.query(
-        `SELECT type,
-                COUNT(*) as count,
-                COALESCE(SUM(amount),0) as total
-         FROM work_logs
-         WHERE telegram_id=$1
-         AND created_at >= $2
-         GROUP BY type`,
-        [id, text]
-      );
-
-      let totalAll = 0;
-      let response = `📊 Stats from ${text}\n\n`;
-
-      result.rows.forEach(r=>{
-        const amount = Number(r.total) || 0;
-        totalAll += amount;
-
-        response += `${r.type}
-Count: ${r.count}
-Total: $${amount.toFixed(2)}
-
-`;
-      });
-
-      response += `🧾 TOTAL: $${totalAll.toFixed(2)}`;
-
-      return bot.sendMessage(msg.chat.id,response);
-    }
+  );
+}
 
     // ===== WORK BUTTONS =====
     const { rows } = await pool.query(
