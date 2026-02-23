@@ -36,6 +36,19 @@ export async function initDB() {
     );
   `);
 
+  // ===== COMPANY PAYMENTS =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_periods (
+      id SERIAL PRIMARY KEY,
+      telegram_id TEXT NOT NULL,
+      period_from DATE NOT NULL,
+      period_to DATE NOT NULL,
+      paid_amount NUMERIC DEFAULT 0,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
   // ===============================
   // 🚀 ПРОФЕССИОНАЛЬНЫЙ ИНДЕКС
   // ===============================
@@ -43,6 +56,11 @@ export async function initDB() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_work_logs_fast
     ON work_logs (telegram_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_payment_periods_fast
+    ON payment_periods (telegram_id, period_to DESC);
   `);
 
   console.log("Database initialized with high-speed indexes 🚀");

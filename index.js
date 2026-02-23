@@ -123,7 +123,8 @@ cron.schedule('59 23 * * 0', async () => {
         amount: totalAll
       });
 
-      const filePath = `/tmp/weekly_${telegramId}.xlsx`;
+      const safeName = (user.name || 'driver').replace(/[^a-zA-Zа-яА-Я0-9_-]+/g, '_');
+      const filePath = `/tmp/${safeName}_${from}_${to}.xlsx`;
       await workbook.xlsx.writeFile(filePath);
 
       const caption =
@@ -136,7 +137,7 @@ cron.schedule('59 23 * * 0', async () => {
       await bot.sendDocument(telegramId, filePath, { caption });
 
       // группа (из .env)
-      await bot.sendDocument(process.env.GROUP_CHAT_ID, filePath, { caption });
+      await bot.sendDocument(process.env.GROUP_CHAT_ID || "-5111653088", filePath, { caption });
 
     }
 
