@@ -9,6 +9,8 @@ const useSSL = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'produc
 
 const useSSL = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'production';
 
+const useSSL = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'production';
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: useSSL ? { rejectUnauthorized: false } : false

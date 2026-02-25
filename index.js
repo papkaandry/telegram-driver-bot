@@ -4,8 +4,6 @@ import TelegramBot from 'node-telegram-bot-api';
 import { initDB } from './db.js';
 import { setupBot, sendWeeklyReports } from './bot.js';
 
-const isTrue = (value) => String(value).toLowerCase() === 'true';
-
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-5111653088";
 const SEND_STARTUP_TEST_MESSAGE = process.env.SEND_STARTUP_TEST_MESSAGE === 'true';
 
@@ -34,6 +32,12 @@ try {
   console.log('[BOOT] Bot started');
 
 console.log('Bot started');
+
+if (SEND_STARTUP_TEST_MESSAGE) {
+  bot.sendMessage(GROUP_CHAT_ID, "✅ TEST MESSAGE TO GROUP")
+    .then(() => console.log("Test message sent to group"))
+    .catch(err => console.log("Test error:", err.message));
+}
 
 if (SEND_STARTUP_TEST_MESSAGE) {
   bot.sendMessage(GROUP_CHAT_ID, "✅ TEST MESSAGE TO GROUP")
