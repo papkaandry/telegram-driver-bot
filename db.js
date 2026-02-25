@@ -7,9 +7,11 @@ const shouldUseSSL = isTrue(process.env.DB_SSL) || process.env.NODE_ENV === 'pro
 
 const useSSL = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'production';
 
+const useSSL = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'production';
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: shouldUseSSL ? { rejectUnauthorized: false } : false
+  ssl: useSSL ? { rejectUnauthorized: false } : false
 });
 
 export async function initDB() {
@@ -75,9 +77,60 @@ export async function initDB() {
       ON payment_periods (telegram_id, created_at DESC);
     `);
 
-    console.log('[DB] Initialized successfully');
-  } catch (error) {
-    console.error('[DB] Initialization failed:', error.message);
-    throw error;
-  }
+  // ===== USERS =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      telegram_id TEXT UNIQUE,
+      name TEXT,
+      role TEXT DEFAULT 'driver',
+      email TEXT,
+      otr_rate NUMERIC DEFAULT 0.65,
+      local_rate NUMERIC DEFAULT 25,
+      boise_rate NUMERIC DEFAULT 630,
+      approved BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
+  // ===== WORK LOGS =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS work_logs (
+      id SERIAL PRIMARY KEY,
+      telegram_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      value NUMERIC,
+      amount NUMERIC,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
+  // ===== COMPANY PAYMENTS =====
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_periods (
+      id SERIAL PRIMARY KEY,
+      telegram_id TEXT NOT NULL,
+      period_from DATE NOT NULL,
+      period_to DATE NOT NULL,
+      paid_amount NUMERIC DEFAULT 0,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
+  // ===============================
+  // 🚀 ПРОФЕССИОНАЛЬНЫЙ ИНДЕКС
+  // ===============================
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_work_logs_fast
+    ON work_logs (telegram_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_payment_periods_fast
+    ON payment_periods (telegram_id, period_to DESC);
+  `);
+
+  console.log("Database initialized with high-speed indexes 🚀");
 }
