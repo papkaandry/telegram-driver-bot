@@ -1,8 +1,26 @@
 import { pool } from './db.js';
 import { sendMail } from './mail.js';
 
-const ADMIN_ID = "427968134";
-const GROUP_CHAT_ID = "-5111653088";
+const ADMIN_ID = process.env.ADMIN_ID || "427968134";
+const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-5111653088";
+
+function getMainKeyboard(isAdmin) {
+  const base = [
+    [{ text: "🚛 OTR" }],
+    [{ text: "🏙 Local" }],
+    [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
+    [{ text: "📊 Stats" }]
+  ];
+
+  if (isAdmin) {
+    return {
+      keyboard: [[{ text: "🛠 Admin Menu" }], ...base],
+      resize_keyboard: true
+    };
+  }
+
+  return { keyboard: base, resize_keyboard: true };
+}
 
 
 export function setupBot(bot) {
@@ -56,6 +74,119 @@ export function setupBot(bot) {
   return keyboard;
 }
 
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function isValidDateInput(v) {
+    if (!DATE_RE.test(v)) return false;
+
+    const [y, m, d] = v.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+
+    return dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === m - 1 &&
+      dt.getUTCDate() === d;
+  }
+
+  function parsePeriodInput(text) {
+    const parts = text.trim().split(/\s+/);
+    if (parts.length !== 2) return null;
+
+    const [dateFrom, dateTo] = parts;
+    if (!isValidDateInput(dateFrom) || !isValidDateInput(dateTo)) return null;
+    if (dateFrom > dateTo) return null;
+
+    return { dateFrom, dateTo };
+  }
+
+  function fileSafeName(name) {
+    return (name || 'driver').replace(/[^a-zA-Zа-яА-Я0-9_-]+/g, '_');
+  }
+
+  function nextDay(dateStr) {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  async function getLastPaidTo(telegramId) {
+    const result = await pool.query(
+      `SELECT MAX(period_to) as last_paid_to
+       FROM payment_periods
+       WHERE telegram_id=$1`,
+      [telegramId]
+    );
+
+    return result.rows[0]?.last_paid_to || null;
+  }
+
+  async function buildWorkExcel({ telegramId, dateFrom, dateTo, driverName }) {
+    const ExcelJS = (await import('exceljs')).default;
+
+    const { rows } = await pool.query(
+      `SELECT type, value, amount, DATE(created_at) as date
+       FROM work_logs
+       WHERE telegram_id=$1
+       AND DATE(created_at) BETWEEN $2 AND $3
+       ORDER BY created_at`,
+      [telegramId, dateFrom, dateTo]
+    );
+
+    if (!rows.length) return null;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Работа / Work');
+
+    worksheet.columns = [
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Type', key: 'type', width: 20 },
+      { header: 'Value', key: 'value', width: 15 },
+      { header: 'Amount', key: 'amount', width: 15 }
+    ];
+
+    let totalAmount = 0;
+    const typeCounters = { otr: 0, local: 0, boise: 0, boise_custom: 0 };
+
+    rows.forEach((r) => {
+      totalAmount += Number(r.amount) || 0;
+      if (typeCounters[r.type] !== undefined) typeCounters[r.type] += 1;
+      worksheet.addRow(r);
+    });
+
+    worksheet.addRow({});
+    worksheet.addRow({ type: 'TOTAL', amount: totalAmount.toFixed(2) });
+    worksheet.addRow({ type: 'OTR rides', value: typeCounters.otr });
+    worksheet.addRow({ type: 'LOCAL entries', value: typeCounters.local });
+    worksheet.addRow({ type: 'BOISE entries', value: typeCounters.boise + typeCounters.boise_custom });
+
+    const paymentsSheet = workbook.addWorksheet('Оплаты / Payments');
+    paymentsSheet.columns = [
+      { header: 'Period From', key: 'period_from', width: 15 },
+      { header: 'Period To', key: 'period_to', width: 15 },
+      { header: 'Paid Amount', key: 'paid_amount', width: 15 },
+      { header: 'Saved At', key: 'created_at', width: 24 }
+    ];
+
+    const payments = await pool.query(
+      `SELECT period_from, period_to, paid_amount, created_at
+       FROM payment_periods
+       WHERE telegram_id=$1
+       ORDER BY created_at DESC`,
+      [telegramId]
+    );
+
+    if (!payments.rows.length) {
+      paymentsSheet.addRow({ period_from: 'No saved payments' });
+    } else {
+      payments.rows.forEach((row) => paymentsSheet.addRow(row));
+    }
+
+    const safeName = fileSafeName(driverName);
+    const filePath = `/tmp/${safeName}_${dateFrom}_${dateTo}_${Date.now()}.xlsx`;
+    await workbook.xlsx.writeFile(filePath);
+
+    return { filePath, totalAmount, rowsCount: rows.length, typeCounters };
+  }
+
 
   // ================= START =================
   bot.onText(/\/start/, async (msg) => {
@@ -72,16 +203,7 @@ export function setupBot(bot) {
 
     if (id === ADMIN_ID) {
       return bot.sendMessage(msg.chat.id, "👑 Admin Panel", {
-        reply_markup: {
-          keyboard: [
-            [{ text: "🛠 Admin Menu" }],
-            [{ text: "🚛 OTR" }],
-            [{ text: "🏙 Local" }],
-            [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-            [{ text: "📊 Stats" }]
-          ],
-          resize_keyboard: true
-        }
+        reply_markup: getMainKeyboard(true)
       });
     }
 
@@ -112,15 +234,7 @@ export function setupBot(bot) {
 }
 
     return bot.sendMessage(msg.chat.id, "Driver Panel", {
-      reply_markup: {
-        keyboard: [
-          [{ text: "🚛 OTR" }],
-          [{ text: "🏙 Local" }],
-          [{ text: "📍 Boise" }, { text: "📍 Boise Custom" }],
-          [{ text: "📊 Stats" }]
-        ],
-        resize_keyboard: true
-      }
+      reply_markup: getMainKeyboard(false)
     });
   });
 
@@ -130,6 +244,16 @@ export function setupBot(bot) {
     const id = msg.from.id.toString();
     const text = msg.text;
     if (!text) return;
+
+    if (text === '❌ Отмена / Cancel') {
+      delete waitingInput[id];
+      delete adminState[id];
+      delete editTarget[id];
+      delete deleteState[id];
+      return bot.sendMessage(msg.chat.id, '❌ Действие отменено / Action cancelled.', {
+        reply_markup: getMainKeyboard(id === ADMIN_ID)
+      });
+    }
       // ===== BLOCK CHECK =====
   // ===== BLOCK CHECK =====
 if (id !== ADMIN_ID) {
@@ -185,6 +309,8 @@ if (id !== ADMIN_ID) {
           [{ text: "📅 This Month", callback_data: "stats_month" }],
           [{ text: "🗓 This Week", callback_data: "stats_week" }],
           [{ text: "📆 Custom Period", callback_data: "stats_period" }],
+          [{ text: "📁 Excel for period", callback_data: "stats_excel_period" }],
+          [{ text: "💳 Last Company Payment", callback_data: "company_payment" }],
           [{ text: "📁 Send Weekly Excel", callback_data: "send_week_excel" }]
         ]
       }
@@ -287,6 +413,98 @@ if (id !== ADMIN_ID) {
         return bot.sendMessage(msg.chat.id,`📍 Custom saved: $${amount.toFixed(2)}`);
       }
 
+      if (mode === 'stats_excel_period') {
+        const parsed = parsePeriodInput(text);
+
+        if (!parsed) {
+          waitingInput[id] = 'stats_excel_period';
+          return bot.sendMessage(msg.chat.id,
+            'Неверный формат. Введите: YYYY-MM-DD YYYY-MM-DD\nInvalid format. Example: 2026-01-01 2026-02-01');
+        }
+
+        const report = await buildWorkExcel({
+          telegramId: id,
+          dateFrom: parsed.dateFrom,
+          dateTo: parsed.dateTo,
+          driverName: msg.from.first_name
+        });
+
+        if (!report) {
+          return bot.sendMessage(msg.chat.id, 'За этот период у вас не было работы / No work for this period.');
+        }
+
+        const caption = `📁 REPORT\n👤 ${msg.from.first_name}\n📅 ${parsed.dateFrom} → ${parsed.dateTo}\n🧾 TOTAL: $${report.totalAmount.toFixed(2)}`;
+
+        await bot.sendDocument(msg.chat.id, report.filePath, { caption });
+
+        return bot.sendMessage(msg.chat.id, '✅ Excel отправлен в этот чат / Excel sent to this chat.', {
+          reply_markup: getMainKeyboard(id === ADMIN_ID)
+        });
+      }
+
+      if (mode === 'company_payment_period') {
+        const parsed = parsePeriodInput(text);
+
+        if (!parsed) {
+          waitingInput[id] = 'company_payment_period';
+          return bot.sendMessage(msg.chat.id,
+            'Введите период последней оплаты: YYYY-MM-DD YYYY-MM-DD\nEnter period: 2026-01-01 2026-02-01');
+        }
+
+        const paidResult = await pool.query(
+          `SELECT COALESCE(SUM(amount),0) as total
+           FROM work_logs
+           WHERE telegram_id=$1
+           AND DATE(created_at) BETWEEN $2 AND $3`,
+          [id, parsed.dateFrom, parsed.dateTo]
+        );
+
+        const paidAmount = Number(paidResult.rows[0]?.total || 0);
+
+        await pool.query(
+          `INSERT INTO payment_periods (telegram_id, period_from, period_to, paid_amount, created_by)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [id, parsed.dateFrom, parsed.dateTo, paidAmount, id]
+        );
+
+        const debtFrom = parsed.dateTo;
+        const today = new Date().toISOString().slice(0, 10);
+
+        const debtRows = await pool.query(
+          `SELECT type, COUNT(*) as count, COALESCE(SUM(amount),0) as total
+           FROM work_logs
+           WHERE telegram_id=$1
+           AND DATE(created_at) > $2
+           AND DATE(created_at) <= $3
+           GROUP BY type
+           ORDER BY type`,
+          [id, debtFrom, today]
+        );
+
+        let debtTotal = 0;
+        let details = '';
+
+        debtRows.rows.forEach((r) => {
+          const total = Number(r.total || 0);
+          debtTotal += total;
+          details += `• ${r.type}: ${r.count} | $${total.toFixed(2)}\n`;
+        });
+
+        if (!details) details = '• Нет записей / No entries\n';
+
+        return bot.sendMessage(
+          msg.chat.id,
+          `💳 Последняя оплата сохранена / Payment saved\n📅 ${parsed.dateFrom} → ${parsed.dateTo}\n💵 Оплачено за период: $${paidAmount.toFixed(2)}\n\n📌 Остаток долга компании с ${parsed.dateTo} по ${today}:\n${details}🧾 TOTAL DUE: $${debtTotal.toFixed(2)}`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '📁 Save debt to Excel', callback_data: `company_payment_excel_${parsed.dateTo}` }]
+              ]
+            }
+          }
+        );
+      }
+
       // ===== FIX EDIT RATES =====
       if (mode === "edit_rates") {
 
@@ -365,10 +583,13 @@ bot.on('callback_query', async (query) => {
   const id = query.from.id.toString();
   const data = query.data;
 
-  // Allow stats + weekly excel for everyone
+  // Allow driver-access callbacks for everyone
 if (
   !data.startsWith("stats_") &&
-  data !== "send_week_excel"
+  data !== "send_week_excel" &&
+  data !== "company_payment" &&
+  !data.startsWith("company_payment_excel_") &&
+  data !== "cancel_input"
 ) {
   if (id !== ADMIN_ID) return;
 }
@@ -381,6 +602,9 @@ if (data === "stats_month") {
     .toISOString()
     .slice(0,10);
 
+  const lastPaidTo = await getLastPaidTo(id);
+  const fromDate = lastPaidTo ? (nextDay(lastPaidTo) > firstDay ? nextDay(lastPaidTo) : firstDay) : firstDay;
+
   const { rows } = await pool.query(
     `SELECT type,
             value,
@@ -390,7 +614,7 @@ if (data === "stats_month") {
      WHERE telegram_id=$1
      AND DATE(created_at) >= $2
      ORDER BY created_at`,
-    [id, firstDay]
+    [id, fromDate]
   );
 
   if (rows.length === 0) {
@@ -461,6 +685,9 @@ if (data === "stats_week") {
     .toISOString()
     .slice(0,10);
 
+  const lastPaidTo = await getLastPaidTo(id);
+  const fromDate = lastPaidTo ? (nextDay(lastPaidTo) > monday ? nextDay(lastPaidTo) : monday) : monday;
+
   const { rows } = await pool.query(
     `SELECT type,
             value,
@@ -470,7 +697,7 @@ if (data === "stats_week") {
      WHERE telegram_id=$1
      AND DATE(created_at) >= $2
      ORDER BY created_at`,
-    [id, monday]
+    [id, fromDate]
   );
 
   if (rows.length === 0) {
@@ -517,6 +744,70 @@ ${emoji} *${typeName}*
 }
 
 // ===== OPEN CALENDAR =====
+if (data === 'stats_excel_period') {
+  waitingInput[id] = 'stats_excel_period';
+  return bot.sendMessage(
+    query.message.chat.id,
+    'Введите период для Excel: YYYY-MM-DD YYYY-MM-DD\nEnter period for Excel: 2026-01-01 2026-02-01',
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: '❌ Отмена / Cancel', callback_data: 'cancel_input' }]]
+      }
+    }
+  );
+}
+
+if (data === 'company_payment') {
+  waitingInput[id] = 'company_payment_period';
+  return bot.sendMessage(
+    query.message.chat.id,
+    'Введите последний оплаченный период: YYYY-MM-DD YYYY-MM-DD\nExample: 2026-01-01 2026-02-01',
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: '❌ Отмена / Cancel', callback_data: 'cancel_input' }]]
+      }
+    }
+  );
+}
+
+if (data.startsWith('company_payment_excel_')) {
+  const lastPaidTo = data.replace('company_payment_excel_', '');
+
+  if (!isValidDateInput(lastPaidTo)) {
+    return bot.sendMessage(query.message.chat.id, 'Некорректная дата периода оплаты / Invalid paid period date.');
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const report = await buildWorkExcel({
+    telegramId: id,
+    dateFrom: nextDay(lastPaidTo),
+    dateTo: today,
+    driverName: query.from.first_name
+  });
+
+  if (!report) {
+    return bot.sendMessage(query.message.chat.id, 'За этот период у вас не было работы / No work for this period.');
+  }
+
+  const caption = `📁 DUE REPORT\n👤 ${query.from.first_name}\n📅 ${lastPaidTo} → ${today}\n🧾 TOTAL DUE: $${report.totalAmount.toFixed(2)}`;
+  await bot.sendDocument(query.message.chat.id, report.filePath, { caption });
+  return bot.sendMessage(query.message.chat.id, '✅ Excel отправлен в этот чат / Excel sent to this chat.', {
+    reply_markup: getMainKeyboard(id === ADMIN_ID)
+  });
+}
+
+if (data === 'cancel_input') {
+  delete waitingInput[id];
+  delete adminState[id];
+  delete editTarget[id];
+  delete deleteState[id];
+
+  return bot.sendMessage(query.message.chat.id, '❌ Действие отменено / Action cancelled.', {
+    reply_markup: getMainKeyboard(id === ADMIN_ID)
+  });
+}
+
 if (data === "stats_period") {
 
   const now = new Date();
@@ -700,23 +991,21 @@ if (data === "send_week_excel") {
 
   rows.forEach(r => worksheet.addRow(r));
 
-  const filePath = `/tmp/weekly_${id}.xlsx`;
-  await workbook.xlsx.writeFile(filePath);
-
   const driverName = query.from.first_name;
+  const safeName = fileSafeName(driverName);
+  const filePath = `/tmp/${safeName}_${mondayStr}_${sundayStr}.xlsx`;
+  await workbook.xlsx.writeFile(filePath);
 
   const caption =
 `📁 WEEKLY REPORT
 👤 Driver: ${driverName}
 📅 ${mondayStr} → ${sundayStr}`;
 
-  // отправляем пользователю
   await bot.sendDocument(query.message.chat.id, filePath, { caption });
 
-  // отправляем в группу
-  await bot.sendDocument(GROUP_CHAT_ID, filePath, { caption });
-
-  return;
+  return bot.sendMessage(query.message.chat.id, '✅ Excel отправлен в этот чат / Excel sent to this chat.', {
+    reply_markup: getMainKeyboard(id === ADMIN_ID)
+  });
 }
 
     // ===== DRIVERS LIST =====
@@ -848,6 +1137,10 @@ if (data.startsWith("block_")) {
     }
 
     if (data.startsWith("type_")) {
+      if (!adminState[id]) {
+        return bot.sendMessage(query.message.chat.id, 'Сначала выберите водителя / Select driver first.');
+      }
+
       adminState[id].type = data.replace("type_","");
       waitingInput[id] = "admin_add_value";
       return bot.sendMessage(query.message.chat.id,"Enter value:");
