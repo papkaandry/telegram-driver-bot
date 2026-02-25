@@ -5,7 +5,8 @@ import { initDB, pool } from './db.js';
 import { setupBot } from './bot.js';
 import ExcelJS from "exceljs";
 
-
+const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-5111653088";
+const SEND_STARTUP_TEST_MESSAGE = process.env.SEND_STARTUP_TEST_MESSAGE === 'true';
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
   polling: {
@@ -32,10 +33,12 @@ await initDB();
 setupBot(bot);
 
 console.log('Bot started');
-// 🧪 TEST GROUP MESSAGE
-bot.sendMessage("-5111653088", "✅ TEST MESSAGE TO GROUP")
-  .then(() => console.log("Test message sent to group"))
-  .catch(err => console.log("Test error:", err.message));
+
+if (SEND_STARTUP_TEST_MESSAGE) {
+  bot.sendMessage(GROUP_CHAT_ID, "✅ TEST MESSAGE TO GROUP")
+    .then(() => console.log("Test message sent to group"))
+    .catch(err => console.log("Test error:", err.message));
+}
 
 // ===== WEEKLY REPORT (Every Sunday 20:00 LA Time) =====
 // ===== WEEKLY EXCEL REPORT (Every Sunday 23:59 LA Time) =====
@@ -137,7 +140,7 @@ cron.schedule('59 23 * * 0', async () => {
       await bot.sendDocument(telegramId, filePath, { caption });
 
       // группа (из .env)
-      await bot.sendDocument(process.env.GROUP_CHAT_ID || "-5111653088", filePath, { caption });
+      await bot.sendDocument(GROUP_CHAT_ID, filePath, { caption });
 
     }
 
