@@ -1,36 +1,37 @@
 import 'dotenv/config';
-import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
-import { initDB, pool } from './db.js';
-import { setupBot } from './bot.js';
-import ExcelJS from "exceljs";
+import TelegramBot from 'node-telegram-bot-api';
+import { initDB } from './db.js';
+import { setupBot, sendWeeklyReports } from './bot.js';
+
+const isTrue = (value) => String(value).toLowerCase() === 'true';
 
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-5111653088";
 const SEND_STARTUP_TEST_MESSAGE = process.env.SEND_STARTUP_TEST_MESSAGE === 'true';
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, {
+const bot = new TelegramBot(BOT_TOKEN, {
   polling: {
     interval: 300,
     autoStart: true
   }
 });
 
-// ===== ERROR HANDLER =====
 bot.on('polling_error', (error) => {
-  console.error('Polling error:', error.message);
+  console.error('[BOT] Polling error:', error.message);
 });
 
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err);
+process.on('unhandledRejection', (error) => {
+  console.error('[PROCESS] Unhandled rejection:', error);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
+process.on('uncaughtException', (error) => {
+  console.error('[PROCESS] Uncaught exception:', error);
 });
 
-// ===== INIT =====
-await initDB();
-setupBot(bot);
+try {
+  await initDB();
+  setupBot(bot);
+  console.log('[BOOT] Bot started');
 
 console.log('Bot started');
 
@@ -40,12 +41,7 @@ if (SEND_STARTUP_TEST_MESSAGE) {
     .catch(err => console.log("Test error:", err.message));
 }
 
-// ===== WEEKLY REPORT (Every Sunday 20:00 LA Time) =====
-// ===== WEEKLY EXCEL REPORT (Every Sunday 23:59 LA Time) =====
 cron.schedule('59 23 * * 0', async () => {
-
-  console.log("📁 Weekly Excel report started");
-
   try {
 
     const now = new Date();
@@ -149,15 +145,6 @@ cron.schedule('59 23 * * 0', async () => {
   } catch (err) {
     console.error("Weekly Excel error:", err.message);
   }
-
 }, {
-  timezone: "America/Los_Angeles"
-});
-
-
-// ===== GRACEFUL SHUTDOWN =====
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Closing...');
-  await pool.end();
-  process.exit(0);
+  timezone: 'America/Los_Angeles'
 });
