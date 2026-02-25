@@ -26,16 +26,6 @@ export async function initDB() {
     );
   `);
 
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'ru';
-  `);
-
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS report_name TEXT;
-  `);
-
   // ===== WORK LOGS =====
   await pool.query(`
     CREATE TABLE IF NOT EXISTS work_logs (
@@ -56,15 +46,9 @@ export async function initDB() {
       period_from DATE NOT NULL,
       period_to DATE NOT NULL,
       paid_amount NUMERIC DEFAULT 0,
-      selected_types TEXT,
       created_by TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     );
-  `);
-
-  await pool.query(`
-    ALTER TABLE payment_periods
-    ADD COLUMN IF NOT EXISTS selected_types TEXT;
   `);
 
   // ===============================
