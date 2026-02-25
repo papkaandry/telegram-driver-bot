@@ -116,7 +116,10 @@ export function setupBot(bot) {
       [telegramId]
     );
 
-    return result.rows[0]?.last_paid_to || null;
+    const v = result.rows[0]?.last_paid_to;
+    if (!v) return null;
+    if (typeof v === 'string') return v.slice(0, 10);
+    return new Date(v).toISOString().slice(0, 10);
   }
 
   async function buildWorkExcel({ telegramId, dateFrom, dateTo, driverName }) {
@@ -306,11 +309,11 @@ if (id !== ADMIN_ID) {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: "📅 This Month", callback_data: "stats_month" }],
-          [{ text: "🗓 This Week", callback_data: "stats_week" }],
+          [{ text: "📅 За месяц", callback_data: "stats_month" }],
+          [{ text: "🗓 За неделю", callback_data: "stats_week" }],
           [{ text: "📆 Custom Period", callback_data: "stats_period" }],
-          [{ text: "📁 Excel for period", callback_data: "stats_excel_period" }],
-          [{ text: "💳 Last Company Payment", callback_data: "company_payment" }],
+          [{ text: "📁 Excel за период", callback_data: "stats_excel_period" }],
+          [{ text: "💳 Оплата за период", callback_data: "company_payment" }],
           [{ text: "📁 Send Weekly Excel", callback_data: "send_week_excel" }]
         ]
       }
@@ -443,12 +446,43 @@ if (id !== ADMIN_ID) {
       }
 
       if (mode === 'company_payment_period') {
-        const parsed = parsePeriodInput(text);
+        const parts = text.trim().split(/\s+/);
+        let parsed = null;
+
+        if (parts.length === 2) {
+          parsed = parsePeriodInput(text);
+        } else if (parts.length === 1 && isValidDateInput(parts[0])) {
+          const lastPaidTo = await getLastPaidTo(id);
+
+          if (!lastPaidTo) {
+            waitingInput[id] = 'company_payment_period';
+            return bot.sendMessage(msg.chat.id,
+              `Сначала укажите полный период: YYYY-MM-DD YYYY-MM-DD\nПример: 2026-02-02 2026-02-08`);
+          }
+
+          const dateFrom = nextDay(lastPaidTo);
+          const dateTo = parts[0];
+
+          if (dateFrom > dateTo) {
+            waitingInput[id] = 'company_payment_period';
+            return bot.sendMessage(msg.chat.id,
+              `Дата окончания должна быть не раньше ${dateFrom}.`);
+          }
+
+          parsed = { dateFrom, dateTo };
+        }
 
         if (!parsed) {
           waitingInput[id] = 'company_payment_period';
+          const lastPaidTo = await getLastPaidTo(id);
+          const autoStartHint = lastPaidTo
+            ? `
+Следующий период можно ввести одной датой окончания, старт будет автоматически: ${nextDay(lastPaidTo)} YYYY-MM-DD`
+            : '';
+
           return bot.sendMessage(msg.chat.id,
-            'Введите период последней оплаты: YYYY-MM-DD YYYY-MM-DD\nEnter period: 2026-01-01 2026-02-01');
+            `Введите оплату за период: YYYY-MM-DD YYYY-MM-DD
+Это нужно, чтобы бот считал остаток долга компании после этой оплаты.${autoStartHint}`);
         }
 
         const paidResult = await pool.query(
@@ -487,18 +521,26 @@ if (id !== ADMIN_ID) {
         debtRows.rows.forEach((r) => {
           const total = Number(r.total || 0);
           debtTotal += total;
-          details += `• ${r.type}: ${r.count} | $${total.toFixed(2)}\n`;
+          details += `• ${r.type}: ${r.count} | $${total.toFixed(2)}
+`;
         });
 
-        if (!details) details = '• Нет записей / No entries\n';
+        if (!details) details = `• За этот период записей нет.\n`;
 
         return bot.sendMessage(
           msg.chat.id,
-          `💳 Последняя оплата сохранена / Payment saved\n📅 ${parsed.dateFrom} → ${parsed.dateTo}\n💵 Оплачено за период: $${paidAmount.toFixed(2)}\n\n📌 Остаток долга компании с ${parsed.dateTo} по ${today}:\n${details}🧾 TOTAL DUE: $${debtTotal.toFixed(2)}`,
+          `💳 Оплата за период сохранена
+📅 ${parsed.dateFrom} → ${parsed.dateTo}
+💵 Оплачено за период: $${paidAmount.toFixed(2)}
+
+ℹ️ Это нужно, чтобы бот показывал, сколько компания должна вам после этой оплаты.
+
+📌 Остаток долга компании с ${parsed.dateTo} по ${today}:
+${details}🧾 ИТОГО ДОЛГ: $${debtTotal.toFixed(2)}`,
           {
             reply_markup: {
               inline_keyboard: [
-                [{ text: '📁 Save debt to Excel', callback_data: `company_payment_excel_${parsed.dateTo}` }]
+                [{ text: '📁 Сохранить долг в Excel', callback_data: `company_payment_excel_${parsed.dateTo}` }]
               ]
             }
           }
@@ -619,11 +661,11 @@ if (data === "stats_month") {
 
   if (rows.length === 0) {
     return bot.sendMessage(query.message.chat.id,
-      "📊 This month has no records yet.");
+      "📊 За этот месяц записей пока нет.");
   }
 
   let totalAll = 0;
-  let response = `📊 *STATS FOR THIS MONTH*\n\n`;
+  let response = `📊 *СТАТИСТИКА ЗА МЕСЯЦ*\n\n`;
 
   rows.forEach(r => {
 
@@ -702,11 +744,11 @@ if (data === "stats_week") {
 
   if (rows.length === 0) {
     return bot.sendMessage(query.message.chat.id,
-      "🗓 No records for this week.");
+      "🗓 За эту неделю записей нет.");
   }
 
   let totalAll = 0;
-  let response = `🗓 *THIS WEEK STATS*\n\n`;
+  let response = `🗓 *СТАТИСТИКА ЗА НЕДЕЛЮ*\n\n`;
 
   rows.forEach(r => {
 
@@ -761,7 +803,7 @@ if (data === 'company_payment') {
   waitingInput[id] = 'company_payment_period';
   return bot.sendMessage(
     query.message.chat.id,
-    'Введите последний оплаченный период: YYYY-MM-DD YYYY-MM-DD\nExample: 2026-01-01 2026-02-01',
+    'Введите оплату за период: YYYY-MM-DD YYYY-MM-DD\nНапример: 2026-02-02 2026-02-08\n\nЭто нужно, чтобы бот показывал остаток долга компании.\nЕсли это не первый период, можно ввести только дату окончания (YYYY-MM-DD), а старт подставится автоматически.',
     {
       reply_markup: {
         inline_keyboard: [[{ text: '❌ Отмена / Cancel', callback_data: 'cancel_input' }]]
