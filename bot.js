@@ -666,8 +666,8 @@ const today = new Date().toISOString().slice(0,10);
             amount,
             DATE(created_at) as date
      FROM work_logs
-     WHERE telegram_id=$1
-     AND DATE(created_at) >= $2
+    WHERE telegram_id=$1
+AND DATE(created_at) BETWEEN $2 AND $3
      ORDER BY created_at`,
     [id, fromDate]
   );
