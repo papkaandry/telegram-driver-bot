@@ -732,17 +732,17 @@ ${emoji} *${typeName}*
   // ===== STATS: THIS WEEK =====
 if (data === "stats_week") {
 
-  const now = new Date();
-  const day = now.getDay();
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+ const lastPaidTo = await getLastPaidTo(id);
 
-  const monday = new Date(now.setDate(diff))
-    .toISOString()
-    .slice(0,10);
+if (!lastPaidTo) {
+  return bot.sendMessage(
+    query.message.chat.id,
+    "❗ You must enter last company payment first."
+  );
+}
 
-  const lastPaidTo = await getLastPaidTo(id);
-  const fromDate = lastPaidTo ? (nextDay(lastPaidTo) > monday ? nextDay(lastPaidTo) : monday) : monday;
-
+const fromDate = nextDay(lastPaidTo);
+const today = new Date().toISOString().slice(0,10);
   const { rows } = await pool.query(
     `SELECT type,
             value,
@@ -750,9 +750,9 @@ if (data === "stats_week") {
             DATE(created_at) as date
      FROM work_logs
      WHERE telegram_id=$1
-     AND DATE(created_at) >= $2
+   AND DATE(created_at) BETWEEN $2 AND $3
      ORDER BY created_at`,
-    [id, fromDate]
+    [id, fromDate, today]
   );
 
   if (rows.length === 0) {
