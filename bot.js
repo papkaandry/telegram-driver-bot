@@ -660,18 +660,17 @@ if (!lastPaidTo) {
 
 const fromDate = nextDay(lastPaidTo);
 const today = new Date().toISOString().slice(0,10);
-  const { rows } = await pool.query(
-    `SELECT type,
-            value,
-            amount,
-            DATE(created_at) as date
-     FROM work_logs
-    WHERE telegram_id=$1
-AND DATE(created_at) BETWEEN $2 AND $3
-     ORDER BY created_at`,
-    [id, fromDate]
-  );
-
+ const { rows } = await pool.query(
+  `SELECT type,
+          value,
+          amount,
+          DATE(created_at) as date
+   FROM work_logs
+   WHERE telegram_id=$1
+   AND DATE(created_at) BETWEEN $2 AND $3
+   ORDER BY created_at`,
+  [id, fromDate, today]
+);
   if (rows.length === 0) {
     return bot.sendMessage(query.message.chat.id,
       "📊 This month has no records yet.");
