@@ -115,16 +115,18 @@ export function setupBot(bot) {
   }
 
   async function getLastPaidTo(telegramId) {
-    const result = await pool.query(
-      `SELECT MAX(period_to) as last_paid_to
-       FROM payment_periods
-       WHERE telegram_id=$1`,
-      [telegramId]
-    );
+  const result = await pool.query(
+    `SELECT MAX(period_to) as last_paid_to
+     FROM payment_periods
+     WHERE telegram_id=$1`,
+    [telegramId]
+  );
 
-    return result.rows[0]?.last_paid_to || null;
-  }
+  const v = result.rows[0]?.last_paid_to;
+  if (!v) return null;
 
+  return new Date(v).toISOString().slice(0, 10);
+}
   async function getUserPrefs(telegramId) {
     const { rows } = await pool.query(
       `SELECT lang, report_name FROM users WHERE telegram_id=$1`,
@@ -647,16 +649,17 @@ if (
 }
 
 // ===== STATS: THIS MONTH =====
-if (data === "stats_month") {
+const lastPaidTo = await getLastPaidTo(id);
 
-  const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-    .toISOString()
-    .slice(0,10);
+if (!lastPaidTo) {
+  return bot.sendMessage(
+    query.message.chat.id,
+    "❗ You must enter last company payment first."
+  );
+}
 
-  const lastPaidTo = await getLastPaidTo(id);
-  const fromDate = lastPaidTo ? (nextDay(lastPaidTo) > firstDay ? nextDay(lastPaidTo) : firstDay) : firstDay;
-
+const fromDate = nextDay(lastPaidTo);
+const today = new Date().toISOString().slice(0,10);
   const { rows } = await pool.query(
     `SELECT type,
             value,
