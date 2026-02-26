@@ -116,13 +116,15 @@ export function setupBot(bot) {
 
   async function getLastPaidTo(telegramId) {
   const result = await pool.query(
-    `SELECT MAX(period_to) as last_paid_to
+    `SELECT period_to
      FROM payment_periods
-     WHERE telegram_id=$1`,
+     WHERE telegram_id=$1
+     ORDER BY created_at DESC
+     LIMIT 1`,
     [telegramId]
   );
 
-  const v = result.rows[0]?.last_paid_to;
+  const v = result.rows[0]?.period_to;
   if (!v) return null;
 
   return new Date(v).toISOString().slice(0, 10);
