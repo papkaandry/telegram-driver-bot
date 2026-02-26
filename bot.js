@@ -649,80 +649,53 @@ if (
 }
 
 // ===== STATS: THIS MONTH =====
-const lastPaidTo = await getLastPaidTo(id);
+// ===== STATS: THIS MONTH =====
+if (data === "stats_month") {
 
-if (!lastPaidTo) {
-  return bot.sendMessage(
-    query.message.chat.id,
-    "❗ You must enter last company payment first."
+  const lastPaidTo = await getLastPaidTo(id);
+
+  if (!lastPaidTo) {
+    return bot.sendMessage(
+      query.message.chat.id,
+      "❗ You must enter last company payment first."
+    );
+  }
+
+  const fromDate = nextDay(lastPaidTo);
+  const today = new Date().toISOString().slice(0,10);
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            value,
+            amount,
+            DATE(created_at) as date
+     FROM work_logs
+     WHERE telegram_id=$1
+     AND DATE(created_at) BETWEEN $2 AND $3
+     ORDER BY created_at`,
+    [id, fromDate, today]
   );
-}
 
-const fromDate = nextDay(lastPaidTo);
-const today = new Date().toISOString().slice(0,10);
- const { rows } = await pool.query(
-  `SELECT type,
-          value,
-          amount,
-          DATE(created_at) as date
-   FROM work_logs
-   WHERE telegram_id=$1
-   AND DATE(created_at) BETWEEN $2 AND $3
-   ORDER BY created_at`,
-  [id, fromDate, today]
-);
   if (rows.length === 0) {
     return bot.sendMessage(query.message.chat.id,
-      "📊 This month has no records yet.");
+      "📊 No unpaid records.");
   }
 
   let totalAll = 0;
-  let response = `📊 *STATS FOR THIS MONTH*\n\n`;
+  let response = `📊 *COMPANY DEBT*\n\n`;
 
   rows.forEach(r => {
-
     const amount = Number(r.amount) || 0;
     totalAll += amount;
 
-    const formattedDate = new Date(r.date)
-      .toISOString()
-      .slice(0,10);
-
-    let emoji = "📦";
-    let typeName = r.type.toUpperCase();
-
-    if (r.type === "otr") {
-      emoji = "🚛";
-      typeName = "OTR";
-    }
-
-    if (r.type === "local") {
-      emoji = "🏙";
-      typeName = "LOCAL";
-    }
-
-    if (r.type === "boise") {
-      emoji = "📍";
-      typeName = "BOISE";
-    }
-
-    if (r.type === "boise_custom") {
-      emoji = "📍💰";
-      typeName = "BOISE CUSTOM";
-    }
-
-    response += 
-`━━━━━━━━━━━━━━
-📅 ${formattedDate}
-${emoji} *${typeName}*
-📊 Value: ${r.value}
-💵 Amount: *$${amount.toFixed(2)}*
+    response += `📅 ${r.date}
+${r.type.toUpperCase()}
+💵 $${amount.toFixed(2)}
 
 `;
   });
 
-  response += `━━━━━━━━━━━━━━
-🧾 *TOTAL: $${totalAll.toFixed(2)}*`;
+  response += `🧾 *TOTAL DUE: $${totalAll.toFixed(2)}*`;
 
   return bot.sendMessage(query.message.chat.id, response, {
     parse_mode: "Markdown"
