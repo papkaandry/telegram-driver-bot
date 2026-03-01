@@ -38,10 +38,10 @@ function daysInMonth(isoMonth) {
 function monthTitle(isoMonth) {
   const [y, m] = isoMonth.split('-').map(Number);
   return new Intl.DateTimeFormat('ru-RU', {
-    timeZone: TIMEZONE,
+    timeZone: 'UTC',
     month: 'long',
     year: 'numeric'
-  }).format(new Date(Date.UTC(y, m - 1, 1)));
+  }).format(new Date(Date.UTC(y, m - 1, 1, 12, 0, 0)));
 }
 
 function buildCalendarKeyboard(targetId, workType, isoMonth) {
