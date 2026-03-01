@@ -22,7 +22,7 @@ import {
   calculateOutstandingDebt,
   deleteDriverCompletely
 } from './data.js';
-import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, nextPaymentFrom } from './reports.js';
+import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, sendPeriodExcelAllDrivers, nextPaymentFrom } from './reports.js';
 
 function monthShift(isoMonth, delta) {
   const [y, m] = isoMonth.split('-').map(Number);
@@ -83,6 +83,38 @@ function buildAddWorkTypeKeyboard(targetId) {
       [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
     ]
   };
+}
+
+function buildPeriodCalendarKeyboard(stage, isoMonth, fromDate = '') {
+  const [year, month] = isoMonth.split('-').map(Number);
+  const days = daysInMonth(isoMonth);
+  const firstDayWeek = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const offset = (firstDayWeek + 6) % 7;
+
+  const rows = [];
+  rows.push([
+    { text: '◀️', callback_data: `pcal:nav:${stage}:${monthShift(isoMonth, -1)}:${fromDate || '-'}` },
+    { text: monthTitle(isoMonth), callback_data: 'cal:noop' },
+    { text: '▶️', callback_data: `pcal:nav:${stage}:${monthShift(isoMonth, 1)}:${fromDate || '-'}` }
+  ]);
+  rows.push(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d) => ({ text: d, callback_data: 'cal:noop' })));
+
+  let week = [];
+  for (let i = 0; i < offset; i += 1) week.push({ text: ' ', callback_data: 'cal:noop' });
+
+  for (let day = 1; day <= days; day += 1) {
+    const date = makeIsoDate(year, month, day);
+    week.push({ text: String(day), callback_data: `pcal:pick:${stage}:${date}:${fromDate || '-'}` });
+    if (week.length === 7) {
+      rows.push(week);
+      week = [];
+    }
+  }
+  while (week.length && week.length < 7) week.push({ text: ' ', callback_data: 'cal:noop' });
+  if (week.length) rows.push(week);
+
+  rows.push([{ text: '❌ Отмена', callback_data: 'cancel_input' }]);
+  return { inline_keyboard: rows };
 }
 
 async function logDriverAction(bot, telegramId, text) {
@@ -384,10 +416,11 @@ async function handleTextInput(bot, msg) {
     return;
   }
 
-  if (text === '✅ Я обновился' && telegramId === ADMIN_ID) {
+  if (text === '✅ Обнова' && telegramId === ADMIN_ID) {
     const { rows } = await pool.query('SELECT telegram_id FROM users WHERE approved = true');
-    for (const row of rows) await bot.sendMessage(row.telegram_id, '🚀 Бот обновлён. Если есть замечания — напишите админу.').catch(() => {});
-    if (GROUP_CHAT_ID) await bot.sendMessage(GROUP_CHAT_ID, '🚀 Бот обновлён админом.').catch(() => {});
+    const updateText = '🚀 Бот обновился. Используйте команду /start для корректной работы.';
+    for (const row of rows) await bot.sendMessage(row.telegram_id, updateText).catch(() => {});
+    if (GROUP_CHAT_ID) await bot.sendMessage(GROUP_CHAT_ID, updateText).catch(() => {});
     await bot.sendMessage(chatId, t(lang, 'updateBroadcastDone'));
     return;
   }
@@ -418,7 +451,7 @@ async function handleTextInput(bot, msg) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '👥 Drivers', callback_data: 'admin:drivers' }],
-          [{ text: '📁 Сохранить сегодня Excel (в группу)', callback_data: 'admin:today_excel' }],
+          [{ text: '📁 Excel за период (в чат и группу)', callback_data: 'admin:period_excel' }],
           [{ text: '📣 Отправить всем сообщение', callback_data: 'admin:broadcast' }]
         ]
       }
@@ -623,13 +656,6 @@ async function handleCallback(bot, query) {
     return;
   }
 
-  if (payload.startsWith('admin:addwork:') && telegramId === ADMIN_ID) {
-    const targetId = payload.split(':')[2];
-    await bot.sendMessage(chatId, `Выберите тип работы для ${targetId}:`, { reply_markup: buildAddWorkTypeKeyboard(targetId) });
-    await bot.answerCallbackQuery(query.id);
-    return;
-  }
-
   if (payload.startsWith('admin:addwork:type:') && telegramId === ADMIN_ID) {
     const [, , , targetId, workType] = payload.split(':');
     if (!WORK_TYPES.includes(workType)) {
@@ -642,6 +668,13 @@ async function handleCallback(bot, query) {
     await bot.sendMessage(chatId, `Выберите дату для ${TYPE_LABELS[workType]}:`, {
       reply_markup: buildCalendarKeyboard(targetId, workType, thisMonth)
     });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('admin:addwork:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    await bot.sendMessage(chatId, `Выберите тип работы для ${targetId}:`, { reply_markup: buildAddWorkTypeKeyboard(targetId) });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -687,6 +720,61 @@ async function handleCallback(bot, query) {
     await bot.sendMessage(chatId, result.ok ? t(lang, 'todayExcelDone') : result.reason);
     await bot.answerCallbackQuery(query.id);
     return;
+  }
+
+  if (payload === 'admin:period_excel' && telegramId === ADMIN_ID) {
+    const { year, month } = toTZParts(new Date(), TIMEZONE);
+    const monthIso = `${year}-${String(month).padStart(2, '0')}`;
+    await bot.sendMessage(chatId, 'Выберите начальную дату периода:', {
+      reply_markup: buildPeriodCalendarKeyboard('from', monthIso)
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('pcal:nav:') && telegramId === ADMIN_ID) {
+    const [, , stage, monthIso, fromRaw] = payload.split(':');
+    const fromDate = fromRaw === '-' ? '' : fromRaw;
+    await bot.editMessageReplyMarkup(buildPeriodCalendarKeyboard(stage, monthIso, fromDate), {
+      chat_id: chatId,
+      message_id: query.message.message_id
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('pcal:pick:') && telegramId === ADMIN_ID) {
+    const [, , stage, date, fromRaw] = payload.split(':');
+    if (stage === 'from') {
+      const [y, m] = date.split('-');
+      const monthIso = `${y}-${m}`;
+      await bot.sendMessage(chatId, `Начало периода: ${date}\nТеперь выберите конечную дату:`, {
+        reply_markup: buildPeriodCalendarKeyboard('to', monthIso, date)
+      });
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (stage === 'to') {
+      const fromDate = fromRaw;
+      if (!fromDate || fromDate === '-') {
+        await bot.answerCallbackQuery(query.id, { text: 'Сначала выберите начало периода.' });
+        return;
+      }
+
+      let from = fromDate;
+      let to = date;
+      if (from > to) {
+        const tmp = from;
+        from = to;
+        to = tmp;
+        await bot.sendMessage(chatId, `↔️ Даты развернул автоматически: ${from} — ${to}`);
+      }
+
+      await sendPeriodExcelAllDrivers(bot, from, to, chatId, ADMIN_ID);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
   }
 
   if (payload === 'admin:broadcast' && telegramId === ADMIN_ID) {

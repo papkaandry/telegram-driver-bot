@@ -8,7 +8,7 @@ export function getMainKeyboard(isAdmin) {
   ];
 
   if (isAdmin) {
-    keyboard.push([{ text: '✅ Я обновился' }, { text: '🛠 Admin Menu' }]);
+    keyboard.push([{ text: '✅ Обнова' }, { text: '🛠 Admin Menu' }]);
   }
 
   return { keyboard, resize_keyboard: true, persistent: true };

@@ -126,6 +126,104 @@ export async function sendTodayExcelToGroup(bot, noGroupText, noDataText) {
   return { ok: true };
 }
 
+export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, adminId) {
+  const workbook = new ExcelJS.Workbook();
+
+  const { rows: users } = await pool.query(
+    `SELECT telegram_id, name
+     FROM users
+     WHERE telegram_id <> $1
+     ORDER BY approved DESC, created_at DESC`,
+    [adminId || '']
+  );
+
+  let globalRows = 0;
+
+  for (const user of users) {
+    const sheetNameRaw = `${user.name || 'Driver'}_${user.telegram_id}`;
+    const sheetName = sheetNameRaw.slice(0, 31);
+    const sheet = workbook.addWorksheet(sheetName);
+
+    sheet.columns = [
+      { header: 'Date', key: 'date', width: 14 },
+      { header: 'Type', key: 'type', width: 16 },
+      { header: 'Value', key: 'value', width: 14 },
+      { header: 'Amount', key: 'amount', width: 14 },
+      { header: 'Paid', key: 'is_paid', width: 10 }
+    ];
+
+    const { rows } = await pool.query(
+      `SELECT
+         w.created_at::date::text AS date,
+         w.type,
+         w.value,
+         w.amount,
+         EXISTS (
+           SELECT 1
+           FROM payment_periods p
+           WHERE p.telegram_id = w.telegram_id
+             AND w.created_at::date BETWEEN p.period_from AND p.period_to
+         ) AS is_paid
+       FROM work_logs w
+       WHERE w.telegram_id = $1
+         AND w.created_at::date BETWEEN $2::date AND $3::date
+       ORDER BY w.created_at ASC`,
+      [user.telegram_id, from, to]
+    );
+
+    if (!rows.length) {
+      sheet.addRow({ date: from, type: 'No data for selected period' });
+      continue;
+    }
+
+    let total = 0;
+    let paidTotal = 0;
+    let unpaidTotal = 0;
+
+    rows.forEach((r) => {
+      const amount = Number(r.amount || 0);
+      total += amount;
+      if (r.is_paid) paidTotal += amount;
+      else unpaidTotal += amount;
+
+      const row = sheet.addRow({
+        date: r.date,
+        type: r.type,
+        value: Number(r.value || 0),
+        amount,
+        is_paid: r.is_paid ? 'YES' : 'NO'
+      });
+
+      row.eachCell((cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: r.is_paid ? 'FFDCFCE7' : 'FFFEE2E2' }
+        };
+      });
+    });
+
+    globalRows += rows.length;
+    sheet.addRow({});
+    sheet.addRow({ type: 'TOTAL', amount: total.toFixed(2) });
+    sheet.addRow({ type: 'PAID TOTAL', amount: paidTotal.toFixed(2) });
+    sheet.addRow({ type: 'UNPAID TOTAL', amount: unpaidTotal.toFixed(2) });
+  }
+
+  const filePath = path.join(os.tmpdir(), `all_drivers_${from}_${to}_${Date.now()}.xlsx`);
+  await workbook.xlsx.writeFile(filePath);
+
+  try {
+    const caption = `📁 Отчёт по всем драйверам\nПериод: ${from} — ${to}\nЗаписей: ${globalRows}`;
+    await bot.sendDocument(adminChatId, filePath, { caption });
+    if (GROUP_CHAT_ID) {
+      await bot.sendDocument(GROUP_CHAT_ID, filePath, { caption });
+    }
+  } finally {
+    await fs.unlink(filePath).catch(() => {});
+  }
+}
+
 export async function sendStatsSummary(bot, chatId, telegramId, from, to, selectedMap, lang, textBuilder) {
   const last = await getLastPaymentPeriod(telegramId);
   const adjustedFrom = getAdjustedFrom(from, last?.period_to);
