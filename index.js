@@ -47,12 +47,12 @@ try {
   process.exit(1);
 }
 
-cron.schedule('59 23 * * 0', async () => {
+cron.schedule('0 7 * * 1', async () => {
   try {
     await sendWeeklyReports(bot);
   } catch (error) {
     console.error('[CRON] Weekly report failed:', error);
   }
 }, {
-  timezone: 'America/Los_Angeles'
+  timezone: 'America/Vancouver'
 });

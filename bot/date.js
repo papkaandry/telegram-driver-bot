@@ -24,8 +24,15 @@ export function makeIsoDate(year, month, day) {
 }
 
 export function parseISODate(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [year, month, day] = value.split('-').map(Number);
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  const iso = makeIsoDate(year, month, day);
   const date = new Date(Date.UTC(year, month - 1, day));
   if (
     date.getUTCFullYear() !== year ||
@@ -34,22 +41,34 @@ export function parseISODate(value) {
   ) {
     return null;
   }
-  return value;
+
+  return iso;
+}
+
+export function parseFlexibleDateRangeInput(input) {
+  const normalized = String(input || '')
+    .trim()
+    .replace(/\s*(?:to|до|по|,|–|—)\s*/gi, ' ')
+    .replace(/\s+/g, ' ');
+
+  const chunks = normalized.split(' ');
+  if (chunks.length !== 2) return null;
+
+  const first = parseISODate(chunks[0]);
+  const second = parseISODate(chunks[1]);
+  if (!first || !second) return null;
+
+  if (first <= second) {
+    return { from: first, to: second, swapped: false };
+  }
+
+  return { from: second, to: first, swapped: true };
 }
 
 export function addDays(isoDate, days) {
   const date = new Date(`${isoDate}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
-}
-
-export function parseDateRangeInput(input) {
-  const chunks = String(input || '').trim().split(/\s+/);
-  if (chunks.length !== 2) return null;
-  const from = parseISODate(chunks[0]);
-  const to = parseISODate(chunks[1]);
-  if (!from || !to || from > to) return null;
-  return { from, to };
 }
 
 export function getTodayISOinTZ() {

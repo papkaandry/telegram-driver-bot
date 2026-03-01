@@ -1,8 +1,17 @@
 import { pool } from '../db.js';
-import { ADMIN_ID, GROUP_CHAT_ID, WORK_TYPES, TYPE_LABELS, t } from './constants.js';
+import { ADMIN_ID, GROUP_CHAT_ID, WORK_TYPES, TYPE_LABELS, TIMEZONE, t } from './constants.js';
 import { getMainKeyboard, getCancelInlineKeyboard, getStatsTypeSelectionKeyboard } from './keyboards.js';
 import { getState, setState, clearState } from './state.js';
-import { parseDateRangeInput, parseISODate, addDays, getMonthRange, getWeekRange, getTodayISOinTZ } from './date.js';
+import {
+  parseFlexibleDateRangeInput,
+  parseISODate,
+  addDays,
+  getMonthRange,
+  getWeekRange,
+  getTodayISOinTZ,
+  makeIsoDate,
+  toTZParts
+} from './date.js';
 import {
   fetchUser,
   getUserLang,
@@ -14,6 +23,72 @@ import {
   deleteDriverCompletely
 } from './data.js';
 import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, nextPaymentFrom } from './reports.js';
+
+function monthShift(isoMonth, delta) {
+  const [y, m] = isoMonth.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function daysInMonth(isoMonth) {
+  const [y, m] = isoMonth.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function monthTitle(isoMonth) {
+  const [y, m] = isoMonth.split('-').map(Number);
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: TIMEZONE,
+    month: 'long',
+    year: 'numeric'
+  }).format(new Date(Date.UTC(y, m - 1, 1)));
+}
+
+function buildCalendarKeyboard(targetId, workType, isoMonth) {
+  const [year, month] = isoMonth.split('-').map(Number);
+  const days = daysInMonth(isoMonth);
+  const firstDayWeek = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const offset = (firstDayWeek + 6) % 7;
+
+  const rows = [];
+  rows.push([{ text: `◀️`, callback_data: `cal:nav:${targetId}:${workType}:${monthShift(isoMonth, -1)}` }, { text: monthTitle(isoMonth), callback_data: 'cal:noop' }, { text: '▶️', callback_data: `cal:nav:${targetId}:${workType}:${monthShift(isoMonth, 1)}` }]);
+  rows.push(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d) => ({ text: d, callback_data: 'cal:noop' })));
+
+  let week = [];
+  for (let i = 0; i < offset; i += 1) week.push({ text: ' ', callback_data: 'cal:noop' });
+
+  for (let day = 1; day <= days; day += 1) {
+    const date = makeIsoDate(year, month, day);
+    week.push({ text: String(day), callback_data: `cal:pick:${targetId}:${workType}:${date}` });
+    if (week.length === 7) {
+      rows.push(week);
+      week = [];
+    }
+  }
+
+  while (week.length && week.length < 7) week.push({ text: ' ', callback_data: 'cal:noop' });
+  if (week.length) rows.push(week);
+
+  rows.push([{ text: '❌ Отмена', callback_data: 'cancel_input' }]);
+  return { inline_keyboard: rows };
+}
+
+function buildAddWorkTypeKeyboard(targetId) {
+  return {
+    inline_keyboard: [
+      [{ text: '🚛 OTR', callback_data: `admin:addwork:type:${targetId}:otr` }],
+      [{ text: '🏙 Local', callback_data: `admin:addwork:type:${targetId}:local` }],
+      [{ text: '📍 Boise', callback_data: `admin:addwork:type:${targetId}:boise` }],
+      [{ text: '📍 Boise Custom', callback_data: `admin:addwork:type:${targetId}:boise_custom` }],
+      [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
+    ]
+  };
+}
+
+async function logDriverAction(bot, telegramId, text) {
+  if (!GROUP_CHAT_ID || telegramId === ADMIN_ID) return;
+  await bot.sendMessage(GROUP_CHAT_ID, `🧾 Driver action\nDriver: ${telegramId}\n${text}`).catch(() => {});
+}
 
 async function sendApprovalRequest(bot, telegramId, name) {
   if (!ADMIN_ID) return;
@@ -42,53 +117,66 @@ async function sendAdminLink(bot, chatId, lang) {
 async function startStatsFilterFlow(bot, chatId, telegramId, from, to) {
   const selected = { otr: true, local: true, boise: true, boise_custom: true };
   setState(telegramId, { type: 'await_stats_filter', from, to, selected });
-  await bot.sendMessage(chatId, 'Выберите типы работ для статистики:', {
+  await bot.sendMessage(chatId, `Выберите типы работ для статистики:\nПериод: ${from} — ${to}`, {
     reply_markup: getStatsTypeSelectionKeyboard(selected)
   });
 }
 
-async function handleAdminDriverActions(bot, chatId, payload, lang) {
-  if (payload.startsWith('admin:rates:')) {
-    const id = payload.split(':')[2];
-    setState(ADMIN_ID, { type: 'await_set_rates', targetId: id });
-    await bot.sendMessage(chatId, 'Введите ставки в формате: otr local boise\nПример: 0.7 30 650', {
-      reply_markup: getCancelInlineKeyboard()
-    });
-    return true;
+async function sendDriverList(bot, chatId) {
+  const { rows } = await pool.query(
+    `SELECT telegram_id, name, approved
+     FROM users
+     WHERE telegram_id <> $1
+     ORDER BY approved DESC, created_at DESC
+     LIMIT 80`,
+    [ADMIN_ID]
+  );
+
+  if (!rows.length) {
+    await bot.sendMessage(chatId, 'Водителей пока нет.');
+    return;
   }
 
-  if (payload.startsWith('admin:addwork:')) {
-    const id = payload.split(':')[2];
-    setState(ADMIN_ID, { type: 'await_add_work', targetId: id });
-    await bot.sendMessage(chatId, 'Добавление работы драйверу.\nФормат: type value amount\nПример: local 8 240', {
-      reply_markup: getCancelInlineKeyboard()
-    });
-    return true;
+  const inline_keyboard = rows.map((row) => [{
+    text: `${row.approved ? '✅' : '⬜'} ${row.name || 'Driver'} (${row.telegram_id})`,
+    callback_data: `admin:driver:${row.telegram_id}`
+  }]);
+
+  await bot.sendMessage(chatId, '👥 Список драйверов:', { reply_markup: { inline_keyboard } });
+}
+
+async function showDriverActions(bot, chatId, targetId) {
+  const user = await fetchUser(targetId);
+  if (!user) {
+    await bot.sendMessage(chatId, 'Драйвер не найден.');
+    return;
   }
 
-  if (payload.startsWith('delete:ask:')) {
-    const targetId = payload.split(':')[2];
-    const targetUser = await fetchUser(targetId);
-    const targetName = targetUser?.name || 'Driver';
-    await bot.sendMessage(chatId, t(lang, 'deleteConfirm', targetName, targetId), {
+  await bot.sendMessage(
+    chatId,
+    `👤 ${user.name || 'Driver'} (${targetId})\nСтатус: ${user.approved ? '✅ approved' : '⬜ pending'}\nRates: OTR ${user.otr_rate}, Local ${user.local_rate}, Boise ${user.boise_rate}`,
+    {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '✅ Да, удалить', callback_data: `delete:confirm:${targetId}` }],
-          [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
+          [{ text: user.approved ? '⬜ Block' : '✅ Approve', callback_data: `${user.approved ? 'block' : 'approve'}:${targetId}` }],
+          [{ text: '✏️ Изменить рейты', callback_data: `admin:rates:${targetId}` }],
+          [{ text: '➕ Добавить работу', callback_data: `admin:addwork:${targetId}` }],
+          [{ text: '🗑 Удалить драйвера', callback_data: `delete:ask:${targetId}` }],
+          [{ text: '⬅️ Назад к списку', callback_data: 'admin:drivers' }]
         ]
       }
-    });
-    return true;
-  }
+    }
+  );
+}
 
-  if (payload.startsWith('delete:confirm:')) {
-    const targetId = payload.split(':')[2];
-    await deleteDriverCompletely(targetId);
-    await bot.sendMessage(chatId, t(lang, 'deleteDone', targetId));
-    return true;
+function parseHoursOrNumber(text) {
+  if (/^\d{1,3}:\d{2}$/.test(text)) {
+    const [h, m] = text.split(':').map(Number);
+    if (m >= 60) return null;
+    return h + (m / 60);
   }
-
-  return false;
+  const value = Number(String(text).replace(',', '.'));
+  return Number.isFinite(value) ? value : null;
 }
 
 async function handleStateInput(bot, msg, lang) {
@@ -99,18 +187,7 @@ async function handleStateInput(bot, msg, lang) {
   if (!currentState || !text) return false;
 
   if (currentState.type === 'await_work_value') {
-    let value;
-    if (currentState.workType === 'local' && /^\d{1,3}:\d{2}$/.test(text)) {
-      const [h, m] = text.split(':').map(Number);
-      if (m >= 60) {
-        await bot.sendMessage(chatId, 'Для формата HH:MM минуты должны быть от 00 до 59.');
-        return true;
-      }
-      value = h + (m / 60);
-    } else {
-      value = Number(text.replace(',', '.'));
-    }
-
+    const value = currentState.workType === 'local' ? parseHoursOrNumber(text) : Number(text.replace(',', '.'));
     if (!Number.isFinite(value) || value <= 0) {
       const hint = currentState.workType === 'local'
         ? `${t(lang, 'invalidNumber')}\nДля Local можно вводить часы как 6.5 или 6:30.`
@@ -126,11 +203,7 @@ async function handleStateInput(bot, msg, lang) {
     if (currentState.workType === 'otr') amount = value * Number(user.otr_rate || 0);
     else if (currentState.workType === 'local') amount = value * Number(user.local_rate || 0);
     else if (currentState.workType === 'boise_custom') amount = value;
-    else {
-      clearState(telegramId);
-      await bot.sendMessage(chatId, t(lang, 'unknownCommand'));
-      return true;
-    }
+    else return true;
 
     await pool.query(
       `INSERT INTO work_logs (telegram_id, type, value, amount)
@@ -142,27 +215,35 @@ async function handleStateInput(bot, msg, lang) {
     await bot.sendMessage(chatId, `✅ Сохранено: ${TYPE_LABELS[currentState.workType]} — $${amount.toFixed(2)}`, {
       reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
     });
+    await logDriverAction(bot, telegramId, `Добавил работу: ${currentState.workType}, value=${value}, amount=$${amount.toFixed(2)}`);
     return true;
   }
 
   if (currentState.type === 'await_custom_period') {
-    const range = parseDateRangeInput(text);
+    const range = parseFlexibleDateRangeInput(text);
     if (!range) {
-      await bot.sendMessage(chatId, t(lang, 'invalidDateRange'));
+      await bot.sendMessage(chatId, `${t(lang, 'invalidDateRange')}\nПример: 2026-2-15 2026-02-18`);
       return true;
+    }
+    if (range.swapped) {
+      await bot.sendMessage(chatId, `↔️ Я поменял даты местами и считаю так: ${range.from} — ${range.to}`);
     }
     await startStatsFilterFlow(bot, chatId, telegramId, range.from, range.to);
     return true;
   }
 
   if (currentState.type === 'await_excel_period') {
-    const range = parseDateRangeInput(text);
+    const range = parseFlexibleDateRangeInput(text);
     if (!range) {
-      await bot.sendMessage(chatId, t(lang, 'invalidDateRange'));
+      await bot.sendMessage(chatId, `${t(lang, 'invalidDateRange')}\nПример: 2026-2-15 to 2026-02-18`);
       return true;
+    }
+    if (range.swapped) {
+      await bot.sendMessage(chatId, `↔️ Я поменял даты местами и считаю так: ${range.from} — ${range.to}`);
     }
     clearState(telegramId);
     await sendExcelToChat(bot, chatId, telegramId, range.from, range.to, '📁 Excel за период');
+    await logDriverAction(bot, telegramId, `Запросил Excel за период ${range.from} — ${range.to}`);
     return true;
   }
 
@@ -171,15 +252,7 @@ async function handleStateInput(bot, msg, lang) {
     let from;
     let to;
 
-    if (parts.length === 2) {
-      const range = parseDateRangeInput(text);
-      if (!range) {
-        await bot.sendMessage(chatId, t(lang, 'invalidDateRange'));
-        return true;
-      }
-      from = range.from;
-      to = range.to;
-    } else if (parts.length === 1) {
+    if (parts.length === 1) {
       const inputTo = parseISODate(parts[0]);
       const last = await getLastPaymentPeriod(telegramId);
       if (!inputTo || !last) {
@@ -193,8 +266,16 @@ async function handleStateInput(bot, msg, lang) {
         return true;
       }
     } else {
-      await bot.sendMessage(chatId, t(lang, 'invalidDateRange'));
-      return true;
+      const range = parseFlexibleDateRangeInput(text);
+      if (!range) {
+        await bot.sendMessage(chatId, t(lang, 'invalidDateRange'));
+        return true;
+      }
+      from = range.from;
+      to = range.to;
+      if (range.swapped) {
+        await bot.sendMessage(chatId, `↔️ Период развернут автоматически: ${from} — ${to}`);
+      }
     }
 
     const paidAmount = await createPaymentPeriod(telegramId, from, to, telegramId);
@@ -203,29 +284,23 @@ async function handleStateInput(bot, msg, lang) {
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'paymentSaved', from, to, paidAmount));
     await bot.sendMessage(chatId, t(lang, 'debtAfterPayment', debt.from, debt.to, debt.summary.total));
+    await logDriverAction(bot, telegramId, `Сохранил оплату периода ${from} — ${to}`);
     return true;
   }
 
   if (currentState.type === 'await_report_name') {
     await pool.query('UPDATE users SET report_name = $2 WHERE telegram_id = $1', [telegramId, text]);
     clearState(telegramId);
-    await bot.sendMessage(chatId, t(lang, 'reportNameUpdated', text), {
-      reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
-    });
+    await bot.sendMessage(chatId, t(lang, 'reportNameUpdated', text), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
     return true;
   }
 
   if (currentState.type === 'await_broadcast_message' && telegramId === ADMIN_ID) {
-    const { rows } = await pool.query(`SELECT telegram_id FROM users WHERE approved = true`);
+    const { rows } = await pool.query('SELECT telegram_id FROM users WHERE approved = true');
     let ok = 0;
     let fail = 0;
     for (const row of rows) {
-      try {
-        await bot.sendMessage(row.telegram_id, text);
-        ok += 1;
-      } catch {
-        fail += 1;
-      }
+      try { await bot.sendMessage(row.telegram_id, text); ok += 1; } catch { fail += 1; }
     }
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'broadcastDone', ok, fail), { reply_markup: getMainKeyboard(true) });
@@ -238,29 +313,46 @@ async function handleStateInput(bot, msg, lang) {
       await bot.sendMessage(chatId, 'Некорректный формат. Пример: 0.7 30 650');
       return true;
     }
-    await pool.query(
-      `UPDATE users SET otr_rate=$2, local_rate=$3, boise_rate=$4 WHERE telegram_id=$1`,
-      [currentState.targetId, otr, local, boise]
-    );
+    await pool.query('UPDATE users SET otr_rate=$2, local_rate=$3, boise_rate=$4 WHERE telegram_id=$1', [currentState.targetId, otr, local, boise]);
     clearState(telegramId);
     await bot.sendMessage(chatId, `✅ Ставки обновлены для ${currentState.targetId}`);
+    await showDriverActions(bot, chatId, currentState.targetId);
     return true;
   }
 
-  if (currentState.type === 'await_add_work' && telegramId === ADMIN_ID) {
-    const [type, valueRaw, amountRaw] = text.split(/\s+/);
-    const value = Number((valueRaw || '').replace(',', '.'));
-    const amount = Number((amountRaw || '').replace(',', '.'));
-    if (!WORK_TYPES.includes(type) || !Number.isFinite(value) || !Number.isFinite(amount)) {
-      await bot.sendMessage(chatId, 'Некорректный формат. Пример: local 8 240');
+  if (currentState.type === 'await_add_work_value' && telegramId === ADMIN_ID) {
+    const targetUser = await fetchUser(currentState.targetId);
+    if (!targetUser) {
+      clearState(telegramId);
+      await bot.sendMessage(chatId, 'Драйвер не найден.');
       return true;
     }
+
+    const raw = currentState.workType === 'local' ? parseHoursOrNumber(text) : Number(text.replace(',', '.'));
+    if (!Number.isFinite(raw) || raw <= 0) {
+      await bot.sendMessage(chatId, 'Введите корректное положительное значение.');
+      return true;
+    }
+
+    let value = raw;
+    let amount;
+    if (currentState.workType === 'otr') amount = value * Number(targetUser.otr_rate || 0);
+    else if (currentState.workType === 'local') amount = value * Number(targetUser.local_rate || 0);
+    else if (currentState.workType === 'boise_custom') amount = value;
+    else {
+      clearState(telegramId);
+      return true;
+    }
+
     await pool.query(
-      `INSERT INTO work_logs (telegram_id, type, value, amount) VALUES ($1,$2,$3,$4)`,
-      [currentState.targetId, type, value, amount]
+      `INSERT INTO work_logs (telegram_id, type, value, amount, created_at)
+       VALUES ($1, $2, $3, $4, $5::date::timestamp + interval '12 hour')`,
+      [currentState.targetId, currentState.workType, value, amount, currentState.date]
     );
+
     clearState(telegramId);
-    await bot.sendMessage(chatId, `✅ Работа добавлена для ${currentState.targetId}`);
+    await bot.sendMessage(chatId, `✅ Добавлено: ${TYPE_LABELS[currentState.workType]} для ${currentState.targetId} на ${currentState.date}.`);
+    await showDriverActions(bot, chatId, currentState.targetId);
     return true;
   }
 
@@ -293,13 +385,9 @@ async function handleTextInput(bot, msg) {
   }
 
   if (text === '✅ Я обновился' && telegramId === ADMIN_ID) {
-    const { rows } = await pool.query(`SELECT telegram_id FROM users WHERE approved = true`);
-    for (const row of rows) {
-      await bot.sendMessage(row.telegram_id, '🚀 Бот обновлён. Если заметите баги — напишите админу.').catch(() => {});
-    }
-    if (GROUP_CHAT_ID) {
-      await bot.sendMessage(GROUP_CHAT_ID, '🚀 Бот обновлён админом.').catch(() => {});
-    }
+    const { rows } = await pool.query('SELECT telegram_id FROM users WHERE approved = true');
+    for (const row of rows) await bot.sendMessage(row.telegram_id, '🚀 Бот обновлён. Если есть замечания — напишите админу.').catch(() => {});
+    if (GROUP_CHAT_ID) await bot.sendMessage(GROUP_CHAT_ID, '🚀 Бот обновлён админом.').catch(() => {});
     await bot.sendMessage(chatId, t(lang, 'updateBroadcastDone'));
     return;
   }
@@ -321,6 +409,7 @@ async function handleTextInput(bot, msg) {
         ]
       }
     });
+    await logDriverAction(bot, telegramId, 'Открыл меню Stats');
     return;
   }
 
@@ -338,6 +427,7 @@ async function handleTextInput(bot, msg) {
   }
 
   const user = await fetchUser(telegramId);
+
   if (text === '🚛 OTR') {
     setState(telegramId, { type: 'await_work_value', workType: 'otr' });
     await bot.sendMessage(chatId, 'Введите мили для OTR:', { reply_markup: getCancelInlineKeyboard() });
@@ -346,7 +436,7 @@ async function handleTextInput(bot, msg) {
 
   if (text === '🏙 Local') {
     setState(telegramId, { type: 'await_work_value', workType: 'local' });
-    await bot.sendMessage(chatId, 'Введите часы для Local:', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Введите часы для Local (например 6:23 или 6.5):', { reply_markup: getCancelInlineKeyboard() });
     return;
   }
 
@@ -354,6 +444,7 @@ async function handleTextInput(bot, msg) {
     const amount = Number(user?.boise_rate || 0);
     await pool.query(`INSERT INTO work_logs (telegram_id, type, value, amount) VALUES ($1, 'boise', 1, $2)`, [telegramId, amount]);
     await bot.sendMessage(chatId, `✅ Сохранено: Boise — $${amount.toFixed(2)}`);
+    await logDriverAction(bot, telegramId, `Добавил работу: boise, amount=$${amount.toFixed(2)}`);
     return;
   }
 
@@ -373,6 +464,11 @@ async function handleCallback(bot, query) {
   const lang = await getUserLang(telegramId);
 
   if (!chatId) {
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'cal:noop') {
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -406,7 +502,7 @@ async function handleCallback(bot, query) {
 
   if (payload === 'stats:custom') {
     setState(telegramId, { type: 'await_custom_period' });
-    await bot.sendMessage(chatId, 'Введите период: YYYY-MM-DD YYYY-MM-DD', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Введите период (форматы: YYYY-M-D YYYY-MM-DD, через to/до/по/запятую тоже можно).', { reply_markup: getCancelInlineKeyboard() });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -427,16 +523,8 @@ async function handleCallback(bot, query) {
       return;
     }
 
-    if (action === 'all') {
-      WORK_TYPES.forEach((w) => { current.selected[w] = true; });
-      setState(telegramId, current);
-      await bot.editMessageReplyMarkup(getStatsTypeSelectionKeyboard(current.selected), { chat_id: chatId, message_id: query.message.message_id });
-      await bot.answerCallbackQuery(query.id);
-      return;
-    }
-
-    if (action === 'none') {
-      WORK_TYPES.forEach((w) => { current.selected[w] = false; });
+    if (action === 'all' || action === 'none') {
+      WORK_TYPES.forEach((w) => { current.selected[w] = action === 'all'; });
       setState(telegramId, current);
       await bot.editMessageReplyMarkup(getStatsTypeSelectionKeyboard(current.selected), { chat_id: chatId, message_id: query.message.message_id });
       await bot.answerCallbackQuery(query.id);
@@ -449,6 +537,7 @@ async function handleCallback(bot, query) {
         title: (from, to) => t(lang, 'statsTitle', from, to),
         noData: (from, to) => t(lang, 'noDataPeriod', from, to)
       });
+      await logDriverAction(bot, telegramId, `Посмотрел stats за ${current.from} — ${current.to}`);
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -456,7 +545,7 @@ async function handleCallback(bot, query) {
 
   if (payload === 'excel:period') {
     setState(telegramId, { type: 'await_excel_period' });
-    await bot.sendMessage(chatId, 'Введите период для Excel: YYYY-MM-DD YYYY-MM-DD', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Введите период (например: 2026-2-15 2026-02-18):', { reply_markup: getCancelInlineKeyboard() });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -464,6 +553,7 @@ async function handleCallback(bot, query) {
   if (payload === 'excel:weekly') {
     const { from, to } = getWeekRange();
     await sendExcelToChat(bot, chatId, telegramId, from, to, '📁 Weekly Excel');
+    await logDriverAction(bot, telegramId, `Запросил weekly Excel ${from} — ${to}`);
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -472,7 +562,7 @@ async function handleCallback(bot, query) {
     const last = await getLastPaymentPeriod(telegramId);
     setState(telegramId, { type: 'await_payment_period' });
     const hint = last
-      ? `Последний период: ${last.period_from} — ${last.period_to}.\nМожно ввести только конечную дату, начало подставится автоматически (${nextPaymentFrom(last)}).`
+      ? `Последний период: ${last.period_from} — ${last.period_to}.\nМожно ввести только конечную дату, начало будет ${nextPaymentFrom(last)}.`
       : 'Введите две даты: YYYY-MM-DD YYYY-MM-DD.';
 
     await bot.sendMessage(chatId, `${t(lang, 'paymentIntro')}\n\n${hint}`, { reply_markup: getCancelInlineKeyboard() });
@@ -507,39 +597,85 @@ async function handleCallback(bot, query) {
       return;
     }
     await pool.query('UPDATE users SET lang = $2 WHERE telegram_id = $1', [telegramId, selectedLang]);
-    await bot.answerCallbackQuery(query.id, { text: selectedLang.toUpperCase() });
     await bot.sendMessage(chatId, t(selectedLang, 'languageUpdated', selectedLang));
+    await bot.answerCallbackQuery(query.id);
     return;
   }
 
   if (payload === 'admin:drivers' && telegramId === ADMIN_ID) {
-    const { rows } = await pool.query(
-      `SELECT telegram_id, name, approved, otr_rate, local_rate, boise_rate
-       FROM users
-       WHERE telegram_id <> $1
-       ORDER BY created_at DESC
-       LIMIT 40`,
-      [ADMIN_ID]
-    );
+    await sendDriverList(bot, chatId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
 
-    if (!rows.length) {
-      await bot.sendMessage(chatId, t(lang, 'driversEmpty'));
+  if (payload.startsWith('admin:driver:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    await showDriverActions(bot, chatId, targetId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('admin:rates:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    setState(telegramId, { type: 'await_set_rates', targetId });
+    await bot.sendMessage(chatId, 'Введите ставки в формате: otr local boise\nПример: 0.7 30 650', { reply_markup: getCancelInlineKeyboard() });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('admin:addwork:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    await bot.sendMessage(chatId, `Выберите тип работы для ${targetId}:`, { reply_markup: buildAddWorkTypeKeyboard(targetId) });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('admin:addwork:type:') && telegramId === ADMIN_ID) {
+    const [, , , targetId, workType] = payload.split(':');
+    if (!WORK_TYPES.includes(workType)) {
+      await bot.answerCallbackQuery(query.id, { text: 'Неверный тип работы' });
+      return;
+    }
+
+    const { year, month } = toTZParts(new Date(), TIMEZONE);
+    const thisMonth = `${year}-${String(month).padStart(2, '0')}`;
+    await bot.sendMessage(chatId, `Выберите дату для ${TYPE_LABELS[workType]}:`, {
+      reply_markup: buildCalendarKeyboard(targetId, workType, thisMonth)
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('cal:nav:') && telegramId === ADMIN_ID) {
+    const [, , targetId, workType, isoMonth] = payload.split(':');
+    await bot.editMessageReplyMarkup(buildCalendarKeyboard(targetId, workType, isoMonth), {
+      chat_id: chatId,
+      message_id: query.message.message_id
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('cal:pick:') && telegramId === ADMIN_ID) {
+    const [, , targetId, workType, date] = payload.split(':');
+    if (workType === 'boise') {
+      const targetUser = await fetchUser(targetId);
+      const amount = Number(targetUser?.boise_rate || 0);
+      await pool.query(
+        `INSERT INTO work_logs (telegram_id, type, value, amount, created_at)
+         VALUES ($1, 'boise', 1, $2, $3::date::timestamp + interval '12 hour')`,
+        [targetId, amount, date]
+      );
+      await bot.sendMessage(chatId, `✅ Boise добавлен для ${targetId} на ${date}.`);
+      await showDriverActions(bot, chatId, targetId);
     } else {
-      for (const row of rows) {
-        await bot.sendMessage(
-          chatId,
-          `${row.name || 'Driver'} (${row.telegram_id})\nСтатус: ${row.approved ? 'approved' : 'pending'}\nRates: OTR ${row.otr_rate}, Local ${row.local_rate}, Boise ${row.boise_rate}`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '✅ Approve', callback_data: `approve:${row.telegram_id}` }, { text: '❌ Block', callback_data: `block:${row.telegram_id}` }],
-                [{ text: '✏️ Изменить рейты', callback_data: `admin:rates:${row.telegram_id}` }, { text: '➕ Добавить работу', callback_data: `admin:addwork:${row.telegram_id}` }],
-                [{ text: '🗑 Удалить драйвера', callback_data: `delete:ask:${row.telegram_id}` }]
-              ]
-            }
-          }
-        );
-      }
+      setState(telegramId, { type: 'await_add_work_value', targetId, workType, date });
+      const prompt = workType === 'otr'
+        ? `Введите мили для OTR (${date}):`
+        : workType === 'local'
+          ? `Введите часы для Local (${date}) в формате 6:23 или 6.5:`
+          : `Введите сумму для Boise Custom (${date}):`;
+      await bot.sendMessage(chatId, prompt, { reply_markup: getCancelInlineKeyboard() });
     }
 
     await bot.answerCallbackQuery(query.id);
@@ -560,7 +696,27 @@ async function handleCallback(bot, query) {
     return;
   }
 
-  if ((await handleAdminDriverActions(bot, chatId, payload, lang)) && telegramId === ADMIN_ID) {
+  if (payload.startsWith('delete:ask:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    const targetUser = await fetchUser(targetId);
+    const targetName = targetUser?.name || 'Driver';
+    await bot.sendMessage(chatId, t(lang, 'deleteConfirm', targetName, targetId), {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Да, удалить', callback_data: `delete:confirm:${targetId}` }],
+          [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
+        ]
+      }
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('delete:confirm:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    await deleteDriverCompletely(targetId);
+    await bot.sendMessage(chatId, t(lang, 'deleteDone', targetId));
+    await sendDriverList(bot, chatId);
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -569,8 +725,9 @@ async function handleCallback(bot, query) {
     const [action, targetId] = payload.split(':');
     const approvedValue = action === 'approve';
     await pool.query('UPDATE users SET approved = $2 WHERE telegram_id = $1', [targetId, approvedValue]);
-    await bot.answerCallbackQuery(query.id, { text: approvedValue ? 'Approved' : 'Blocked' });
     await bot.sendMessage(chatId, `Пользователь ${targetId}: ${approvedValue ? 'одобрен' : 'заблокирован'}`);
+    await showDriverActions(bot, chatId, targetId);
+    await bot.answerCallbackQuery(query.id);
     return;
   }
 
@@ -625,7 +782,7 @@ export async function sendWeeklyReports(bot) {
   try {
     const { from, to } = getWeekRange();
     const usersResult = await pool.query(
-      `SELECT telegram_id FROM users WHERE approved = true OR telegram_id = $1`,
+      'SELECT telegram_id FROM users WHERE approved = true OR telegram_id = $1',
       [ADMIN_ID || '']
     );
 
