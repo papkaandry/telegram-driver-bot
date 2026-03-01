@@ -45,7 +45,8 @@ export async function fetchWorkLogs(telegramId, from, to, selectedTypes = WORK_T
     `SELECT type, value, amount, created_at::date::text AS date
      FROM work_logs
      WHERE telegram_id = $1
-       AND created_at::date BETWEEN $2::date AND $3::date
+       AND created_at >= $2::date
+       AND created_at < ($3::date + interval '1 day')
        AND type = ANY($4::text[])
      ORDER BY created_at ASC`,
     [telegramId, from, to, selectedTypes]

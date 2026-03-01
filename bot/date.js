@@ -100,7 +100,7 @@ export function getWeekRange() {
 }
 
 export function formatDatePretty(isoDate, lang = 'ru') {
-  const date = new Date(`${isoDate}T00:00:00Z`);
+  const date = new Date(`${isoDate}T12:00:00Z`);
   return new Intl.DateTimeFormat(lang === 'ru' ? 'ru-RU' : 'en-US', {
     timeZone: TIMEZONE,
     day: '2-digit',

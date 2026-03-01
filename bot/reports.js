@@ -85,7 +85,8 @@ export async function sendTodayExcelToGroup(bot, noGroupText, noDataText) {
     `SELECT u.name, u.telegram_id, w.type, w.value, w.amount, w.created_at::date::text AS date
      FROM work_logs w
      JOIN users u ON u.telegram_id = w.telegram_id
-     WHERE w.created_at::date = $1::date
+     WHERE w.created_at >= $1::date
+       AND w.created_at < ($1::date + interval '1 day')
      ORDER BY u.name, w.created_at ASC`,
     [today]
   );
@@ -166,7 +167,8 @@ export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, admi
          ) AS is_paid
        FROM work_logs w
        WHERE w.telegram_id = $1
-         AND w.created_at::date BETWEEN $2::date AND $3::date
+         AND w.created_at >= $2::date
+         AND w.created_at < ($3::date + interval '1 day')
        ORDER BY w.created_at ASC`,
       [user.telegram_id, from, to]
     );
