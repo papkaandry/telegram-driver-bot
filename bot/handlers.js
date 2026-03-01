@@ -99,9 +99,23 @@ async function handleStateInput(bot, msg, lang) {
   if (!currentState || !text) return false;
 
   if (currentState.type === 'await_work_value') {
-    const value = Number(text.replace(',', '.'));
+    let value;
+    if (currentState.workType === 'local' && /^\d{1,3}:\d{2}$/.test(text)) {
+      const [h, m] = text.split(':').map(Number);
+      if (m >= 60) {
+        await bot.sendMessage(chatId, 'Для формата HH:MM минуты должны быть от 00 до 59.');
+        return true;
+      }
+      value = h + (m / 60);
+    } else {
+      value = Number(text.replace(',', '.'));
+    }
+
     if (!Number.isFinite(value) || value <= 0) {
-      await bot.sendMessage(chatId, t(lang, 'invalidNumber'));
+      const hint = currentState.workType === 'local'
+        ? `${t(lang, 'invalidNumber')}\nДля Local можно вводить часы как 6.5 или 6:30.`
+        : t(lang, 'invalidNumber');
+      await bot.sendMessage(chatId, hint);
       return true;
     }
 
@@ -272,6 +286,12 @@ async function handleTextInput(bot, msg) {
     return;
   }
 
+  const approved = await ensureApproved(telegramId);
+  if (!approved && telegramId !== ADMIN_ID) {
+    await bot.sendMessage(chatId, t(lang, 'blocked'));
+    return;
+  }
+
   if (text === '✅ Я обновился' && telegramId === ADMIN_ID) {
     const { rows } = await pool.query(`SELECT telegram_id FROM users WHERE approved = true`);
     for (const row of rows) {
@@ -314,12 +334,6 @@ async function handleTextInput(bot, msg) {
         ]
       }
     });
-    return;
-  }
-
-  const approved = await ensureApproved(telegramId);
-  if (!approved) {
-    await bot.sendMessage(chatId, t(lang, 'blocked'));
     return;
   }
 
