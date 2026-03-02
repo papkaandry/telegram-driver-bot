@@ -133,8 +133,10 @@ export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, admi
   const { rows: users } = await pool.query(
     `SELECT telegram_id, name
      FROM users
-     WHERE telegram_id <> $1
-     ORDER BY approved DESC, created_at DESC`,
+     ORDER BY
+       CASE WHEN telegram_id = $1 THEN 0 ELSE 1 END,
+       approved DESC,
+       created_at DESC`,
     [adminId || '']
   );
 
