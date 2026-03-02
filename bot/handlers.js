@@ -608,7 +608,7 @@ async function handleCallback(bot, query) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '✏️ Имя в Excel', callback_data: 'settings:report_name' }],
-          [{ text: '🇷🇺 Русский', callback_data: 'settings:lang:ru' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
+          [{ text: ' Русский', callback_data: 'settings:lang:ru' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
         ]
       }
     });
