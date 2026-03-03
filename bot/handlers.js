@@ -7,6 +7,7 @@ import {
   parseISODate,
   addDays,
   getMonthRange,
+  getPreviousMonthRange,
   getWeekRange,
   getTodayISOinTZ,
   makeIsoDate,
@@ -429,6 +430,7 @@ async function handleTextInput(bot, msg) {
   if (handledState) return;
 
   if (text === '📊 Stats') {
+    clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'selectAction'), {
       reply_markup: {
         inline_keyboard: [
@@ -447,6 +449,7 @@ async function handleTextInput(bot, msg) {
   }
 
   if (text === '🛠 Admin Menu' && telegramId === ADMIN_ID) {
+    clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'adminMenu'), {
       reply_markup: {
         inline_keyboard: [
@@ -608,7 +611,7 @@ async function handleCallback(bot, query) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '✏️ Имя в Excel', callback_data: 'settings:report_name' }],
-          [{ text: ' Русский', callback_data: 'settings:lang:ru' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
+          [{ text: '🇷🇺 Русский', callback_data: 'settings:lang:ru' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
         ]
       }
     });
@@ -868,7 +871,7 @@ export function setupBot(bot) {
 
 export async function sendWeeklyReports(bot) {
   try {
-    const { from, to } = getWeekRange();
+    const { from, to } = getPreviousMonthRange();
     const usersResult = await pool.query(
       'SELECT telegram_id FROM users WHERE approved = true OR telegram_id = $1',
       [ADMIN_ID || '']
@@ -877,9 +880,9 @@ export async function sendWeeklyReports(bot) {
     for (const row of usersResult.rows) {
       const telegramId = String(row.telegram_id);
       try {
-        await sendExcelToChat(bot, telegramId, telegramId, from, to, '📁 Авто weekly Excel');
+        await sendExcelToChat(bot, telegramId, telegramId, from, to, '📁 Авто Excel за прошлый месяц');
         if (GROUP_CHAT_ID) {
-          await sendExcelToChat(bot, GROUP_CHAT_ID, telegramId, from, to, '📁 Weekly copy to group');
+          await sendExcelToChat(bot, GROUP_CHAT_ID, telegramId, from, to, '📁 Копия: прошлый месяц');
         }
       } catch (error) {
         console.error(`[CRON] Failed for user ${telegramId}:`, error.message);

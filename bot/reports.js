@@ -17,7 +17,27 @@ async function getDriverName(telegramId) {
 }
 
 export async function buildExcelReport({ telegramId, from, to }) {
-  const rows = await fetchWorkLogs(telegramId, from, to, WORK_TYPES);
+  const { rows } = await pool.query(
+    `SELECT
+       w.created_at::date::text AS date,
+       w.type,
+       w.value,
+       w.amount,
+       EXISTS (
+         SELECT 1
+         FROM payment_periods p
+         WHERE p.telegram_id = w.telegram_id
+           AND w.created_at::date BETWEEN p.period_from AND p.period_to
+       ) AS is_paid
+     FROM work_logs w
+     WHERE w.telegram_id = $1
+       AND w.created_at >= $2::date
+       AND w.created_at < ($3::date + interval '1 day')
+       AND w.type = ANY($4::text[])
+     ORDER BY w.created_at ASC`,
+    [telegramId, from, to, WORK_TYPES]
+  );
+
   const summary = summarizeLogs(rows);
 
   const workbook = new ExcelJS.Workbook();
@@ -26,13 +46,30 @@ export async function buildExcelReport({ telegramId, from, to }) {
     { header: 'Date', key: 'date', width: 14 },
     { header: 'Type', key: 'type', width: 16 },
     { header: 'Value', key: 'value', width: 14 },
-    { header: 'Amount', key: 'amount', width: 14 }
+    { header: 'Amount', key: 'amount', width: 14 },
+    { header: 'Paid', key: 'is_paid', width: 10 }
   ];
 
   if (!rows.length) {
     sheet.addRow({ date: from, type: 'No data for selected period' });
   } else {
-    rows.forEach((row) => sheet.addRow(row));
+    rows.forEach((row) => {
+      const excelRow = sheet.addRow({
+        date: row.date,
+        type: row.type,
+        value: Number(row.value || 0),
+        amount: Number(row.amount || 0),
+        is_paid: row.is_paid ? 'YES' : 'NO'
+      });
+
+      excelRow.eachCell((cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: row.is_paid ? 'FFDCFCE7' : 'FFFEE2E2' }
+        };
+      });
+    });
   }
 
   sheet.addRow({});

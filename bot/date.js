@@ -84,6 +84,17 @@ export function getMonthRange() {
   return { from, to };
 }
 
+export function getPreviousMonthRange() {
+  const { year, month } = toTZParts(new Date(), TIMEZONE);
+  const prev = new Date(Date.UTC(year, month - 2, 1));
+  const prevYear = prev.getUTCFullYear();
+  const prevMonth = prev.getUTCMonth() + 1;
+  const from = makeIsoDate(prevYear, prevMonth, 1);
+  const lastDay = new Date(Date.UTC(prevYear, prevMonth, 0)).getUTCDate();
+  const to = makeIsoDate(prevYear, prevMonth, lastDay);
+  return { from, to };
+}
+
 export function getWeekRange() {
   const { year, month, day } = toTZParts(new Date(), TIMEZONE);
   const localDate = new Date(Date.UTC(year, month - 1, day));
