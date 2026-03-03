@@ -25,6 +25,8 @@ import {
 } from './data.js';
 import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, sendPeriodExcelAllDrivers, nextPaymentFrom } from './reports.js';
 
+const supportSessions = new Map();
+
 function monthShift(isoMonth, delta) {
   const [y, m] = isoMonth.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
@@ -219,6 +221,24 @@ function isMainActionText(text) {
   ].includes(text);
 }
 
+async function forwardDriverMessageToAdmin(bot, driverId, text) {
+  if (!ADMIN_ID) return;
+  const driver = await fetchUser(driverId);
+  const name = driver?.name || 'Driver';
+  await bot.sendMessage(
+    ADMIN_ID,
+    `💬 Запрос связи от водителя\n👤 ${name} (${driverId})\n\n${text}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✉️ Ответить', callback_data: `support:reply:${driverId}` }],
+          [{ text: '✅ Завершить чат', callback_data: `support:end:${driverId}` }]
+        ]
+      }
+    }
+  );
+}
+
 async function handleStateInput(bot, msg, lang) {
   const telegramId = String(msg.from.id);
   const chatId = msg.chat.id;
@@ -264,6 +284,33 @@ async function handleStateInput(bot, msg, lang) {
       reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
     });
     await logDriverAction(bot, telegramId, `Добавил работу: ${currentState.workType}, value=${value}, amount=$${amount.toFixed(2)}`);
+    return true;
+  }
+
+  if (currentState.type === 'await_support_message') {
+    if (isMainActionText(text)) {
+      clearState(telegramId);
+      return false;
+    }
+
+    supportSessions.set(telegramId, { openedAt: Date.now() });
+    setState(telegramId, { type: 'support_chat' });
+    await forwardDriverMessageToAdmin(bot, telegramId, text);
+    await bot.sendMessage(chatId, '✅ Сообщение отправлено админу. Пишите сюда, я буду пересылать.', {
+      reply_markup: getCancelInlineKeyboard()
+    });
+    return true;
+  }
+
+  if (currentState.type === 'support_chat') {
+    if (isMainActionText(text)) {
+      clearState(telegramId);
+      return false;
+    }
+    await forwardDriverMessageToAdmin(bot, telegramId, text);
+    await bot.sendMessage(chatId, '📨 Отправлено админу.', {
+      reply_markup: getCancelInlineKeyboard()
+    });
     return true;
   }
 
@@ -364,6 +411,27 @@ async function handleStateInput(bot, msg, lang) {
     return true;
   }
 
+  if (currentState.type === 'await_support_reply' && telegramId === ADMIN_ID) {
+    const targetId = currentState.targetId;
+    await bot.sendMessage(targetId, `💬 Ответ админа:\n${text}`, {
+      reply_markup: {
+        inline_keyboard: [[{ text: '❌ Завершить чат', callback_data: 'cancel_input' }]]
+      }
+    }).catch(() => {});
+
+    await bot.sendMessage(chatId, `✅ Ответ отправлен пользователю ${targetId}.`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✉️ Ответить ещё', callback_data: `support:reply:${targetId}` }],
+          [{ text: '✅ Завершить чат', callback_data: `support:end:${targetId}` }]
+        ]
+      }
+    });
+
+    clearState(telegramId);
+    return true;
+  }
+
   if (currentState.type === 'await_set_rates' && telegramId === ADMIN_ID) {
     const [otr, local, boise] = text.split(/\s+/).map((x) => Number(x.replace(',', '.')));
     if (![otr, local, boise].every((n) => Number.isFinite(n) && n >= 0)) {
@@ -425,13 +493,24 @@ async function handleTextInput(bot, msg) {
   const lang = await getUserLang(telegramId);
 
   if (text === '❌ Отмена / Cancel') {
+    const existing = getState(telegramId);
+    if (existing?.type === 'support_chat' || existing?.type === 'await_support_message') {
+      supportSessions.delete(telegramId);
+    }
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
     return;
   }
 
   if (text === '💬 Связаться с админом') {
-    await sendAdminLink(bot, chatId, lang);
+    if (!ADMIN_ID) {
+      await sendAdminLink(bot, chatId, lang);
+      return;
+    }
+    setState(telegramId, { type: 'await_support_message' });
+    await bot.sendMessage(chatId, 'Напишите сообщение для админа. Я передам его и свяжу вас в чате.', {
+      reply_markup: getCancelInlineKeyboard()
+    });
     return;
   }
 
@@ -540,6 +619,10 @@ async function handleCallback(bot, query) {
   }
 
   if (payload === 'cancel_input') {
+    const existing = getState(telegramId);
+    if (existing?.type === 'support_chat' || existing?.type === 'await_support_message') {
+      supportSessions.delete(telegramId);
+    }
     clearState(telegramId);
     await bot.answerCallbackQuery(query.id, { text: t(lang, 'canceled') });
     await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
@@ -655,6 +738,29 @@ async function handleCallback(bot, query) {
     });
     await logDriverAction(bot, telegramId, `Добавил работу: boise, amount=$${Number(current.amount).toFixed(2)}`);
     await bot.answerCallbackQuery(query.id, { text: 'Сохранено' });
+    return;
+  }
+
+  if (payload.startsWith('support:reply:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    supportSessions.set(targetId, { openedAt: Date.now() });
+    setState(telegramId, { type: 'await_support_reply', targetId });
+    await bot.sendMessage(chatId, `Введите ответ для ${targetId}:`, {
+      reply_markup: getCancelInlineKeyboard()
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload.startsWith('support:end:') && telegramId === ADMIN_ID) {
+    const targetId = payload.split(':')[2];
+    supportSessions.delete(targetId);
+    clearState(targetId);
+    await bot.sendMessage(targetId, '✅ Чат с админом завершен.', {
+      reply_markup: getMainKeyboard(false)
+    }).catch(() => {});
+    await bot.sendMessage(chatId, `✅ Чат с ${targetId} завершён.`);
+    await bot.answerCallbackQuery(query.id);
     return;
   }
 
