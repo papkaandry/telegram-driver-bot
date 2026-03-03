@@ -212,6 +212,13 @@ function parseHoursOrNumber(text) {
   return Number.isFinite(value) ? value : null;
 }
 
+function isMainActionText(text) {
+  return [
+    '🚛 OTR', '🏙 Local', '📍 Boise', '📍 Boise Custom',
+    '📊 Stats', '🛠 Admin Menu', '💬 Связаться с админом', '✅ Обнова'
+  ].includes(text);
+}
+
 async function handleStateInput(bot, msg, lang) {
   const telegramId = String(msg.from.id);
   const chatId = msg.chat.id;
@@ -220,6 +227,14 @@ async function handleStateInput(bot, msg, lang) {
   if (!currentState || !text) return false;
 
   if (currentState.type === 'await_work_value') {
+    if (isMainActionText(text)) {
+      clearState(telegramId);
+      await bot.sendMessage(chatId, 'Действие Local/Work отменено.', {
+        reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
+      });
+      return false;
+    }
+
     const value = currentState.workType === 'local' ? parseHoursOrNumber(text) : Number(text.replace(',', '.'));
     if (!Number.isFinite(value) || value <= 0) {
       const hint = currentState.workType === 'local'
@@ -325,6 +340,15 @@ async function handleStateInput(bot, msg, lang) {
     await pool.query('UPDATE users SET report_name = $2 WHERE telegram_id = $1', [telegramId, text]);
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'reportNameUpdated', text), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
+    return true;
+  }
+
+  if (currentState.type === 'await_boise_confirm') {
+    if (isMainActionText(text)) {
+      clearState(telegramId);
+      return false;
+    }
+    await bot.sendMessage(chatId, 'Используйте кнопки подтверждения ниже или нажмите Отмена.');
     return true;
   }
 
@@ -478,9 +502,15 @@ async function handleTextInput(bot, msg) {
 
   if (text === '📍 Boise') {
     const amount = Number(user?.boise_rate || 0);
-    await pool.query(`INSERT INTO work_logs (telegram_id, type, value, amount) VALUES ($1, 'boise', 1, $2)`, [telegramId, amount]);
-    await bot.sendMessage(chatId, `✅ Сохранено: Boise — $${amount.toFixed(2)}`);
-    await logDriverAction(bot, telegramId, `Добавил работу: boise, amount=$${amount.toFixed(2)}`);
+    setState(telegramId, { type: 'await_boise_confirm', amount });
+    await bot.sendMessage(chatId, `Подтвердить Boise на сумму $${amount.toFixed(2)}?`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Подтвердить', callback_data: 'work:boise:confirm' }],
+          [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
+        ]
+      }
+    });
     return;
   }
 
@@ -603,6 +633,28 @@ async function handleCallback(bot, query) {
 
     await bot.sendMessage(chatId, `${t(lang, 'paymentIntro')}\n\n${hint}`, { reply_markup: getCancelInlineKeyboard() });
     await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'work:boise:confirm') {
+    const current = getState(telegramId);
+    if (!current || current.type !== 'await_boise_confirm') {
+      await bot.answerCallbackQuery(query.id, { text: 'Сессия истекла, нажмите Boise снова.' });
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO work_logs (telegram_id, type, value, amount)
+       VALUES ($1, 'boise', 1, $2)`,
+      [telegramId, current.amount]
+    );
+
+    clearState(telegramId);
+    await bot.sendMessage(chatId, `✅ Сохранено: Boise — $${Number(current.amount).toFixed(2)}`, {
+      reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
+    });
+    await logDriverAction(bot, telegramId, `Добавил работу: boise, amount=$${Number(current.amount).toFixed(2)}`);
+    await bot.answerCallbackQuery(query.id, { text: 'Сохранено' });
     return;
   }
 

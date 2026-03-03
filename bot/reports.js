@@ -11,6 +11,20 @@ function safeFileName(name) {
   return String(name || 'driver').replace(/[^\p{L}\p{N}_-]+/gu, '_');
 }
 
+function formatLocalValue(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return String(value ?? '');
+  const totalMinutes = Math.round(n * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
+function formatValueForExcel(type, value) {
+  if (type === 'local') return formatLocalValue(value);
+  return Number(value || 0);
+}
+
 async function getDriverName(telegramId) {
   const user = await fetchUser(telegramId);
   return user?.report_name || user?.name || `driver_${telegramId}`;
@@ -57,7 +71,7 @@ export async function buildExcelReport({ telegramId, from, to }) {
       const excelRow = sheet.addRow({
         date: row.date,
         type: row.type,
-        value: Number(row.value || 0),
+        value: formatValueForExcel(row.type, row.value),
         amount: Number(row.amount || 0),
         is_paid: row.is_paid ? 'YES' : 'NO'
       });
@@ -230,7 +244,7 @@ export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, admi
       const row = sheet.addRow({
         date: r.date,
         type: r.type,
-        value: Number(r.value || 0),
+        value: formatValueForExcel(r.type, r.value),
         amount,
         is_paid: r.is_paid ? 'YES' : 'NO'
       });
