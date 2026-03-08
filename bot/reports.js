@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import ExcelJS from 'exceljs';
 import { pool } from '../db.js';
-import { GROUP_CHAT_ID, WORK_TYPES } from './constants.js';
+import { GROUP_CHAT_ID, TYPE_LABELS, WORK_TYPES } from './constants.js';
 import { formatDatePretty, getTodayISOinTZ, addDays } from './date.js';
 import { fetchUser, fetchWorkLogs, summarizeLogs, normalizeSelectedTypes, getLastPaymentPeriod, getAdjustedFrom } from './data.js';
 
@@ -23,6 +23,10 @@ function formatLocalValue(value) {
 function formatValueForExcel(type, value) {
   if (type === 'local') return formatLocalValue(value);
   return Number(value || 0);
+}
+
+function formatTypeForExcel(type) {
+  return TYPE_LABELS[type] || type;
 }
 
 async function getDriverName(telegramId) {
@@ -53,6 +57,8 @@ export async function buildExcelReport({ telegramId, from, to }) {
   );
 
   const summary = summarizeLogs(rows);
+  const paidTotal = rows.filter((r) => r.is_paid).reduce((acc, r) => acc + Number(r.amount || 0), 0);
+  const unpaidTotal = rows.filter((r) => !r.is_paid).reduce((acc, r) => acc + Number(r.amount || 0), 0);
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Work report');
@@ -70,7 +76,7 @@ export async function buildExcelReport({ telegramId, from, to }) {
     rows.forEach((row) => {
       const excelRow = sheet.addRow({
         date: row.date,
-        type: row.type,
+        type: formatTypeForExcel(row.type),
         value: formatValueForExcel(row.type, row.value),
         amount: Number(row.amount || 0),
         is_paid: row.is_paid ? 'YES' : 'NO'
@@ -88,6 +94,8 @@ export async function buildExcelReport({ telegramId, from, to }) {
 
   sheet.addRow({});
   sheet.addRow({ type: 'TOTAL', amount: summary.total.toFixed(2) });
+  sheet.addRow({ type: 'PAID TOTAL', amount: paidTotal.toFixed(2) });
+  sheet.addRow({ type: 'UNPAID TOTAL', amount: unpaidTotal.toFixed(2) });
 
   const paymentsSheet = workbook.addWorksheet('Payment history');
   paymentsSheet.columns = [
@@ -114,14 +122,14 @@ export async function buildExcelReport({ telegramId, from, to }) {
   const driverName = await getDriverName(telegramId);
   const filePath = path.join(os.tmpdir(), `${safeFileName(driverName)}_${from}_${to}_${Date.now()}.xlsx`);
   await workbook.xlsx.writeFile(filePath);
-  return { filePath, rows, summary };
+  return { filePath, rows, summary, paidTotal, unpaidTotal };
 }
 
 export async function sendExcelToChat(bot, chatId, telegramId, from, to, captionPrefix = '📁 Excel report') {
-  const { filePath, rows, summary } = await buildExcelReport({ telegramId, from, to });
+  const { filePath, rows, summary, paidTotal, unpaidTotal } = await buildExcelReport({ telegramId, from, to });
   try {
     await bot.sendDocument(chatId, filePath, {
-      caption: `${captionPrefix}\nПериод: ${from} — ${to}\nЗаписей: ${rows.length}\nTotal: $${summary.total.toFixed(2)}`
+      caption: `${captionPrefix}\nПеріод: ${from} — ${to}\nЗаписів: ${rows.length}\nTotal: $${summary.total.toFixed(2)}\nPaid: $${paidTotal.toFixed(2)}\nUnpaid: $${unpaidTotal.toFixed(2)}`
     });
   } finally {
     await fs.unlink(filePath).catch(() => {});
@@ -243,7 +251,7 @@ export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, admi
 
       const row = sheet.addRow({
         date: r.date,
-        type: r.type,
+        type: formatTypeForExcel(r.type),
         value: formatValueForExcel(r.type, r.value),
         amount,
         is_paid: r.is_paid ? 'YES' : 'NO'
@@ -285,6 +293,8 @@ export async function sendStatsSummary(bot, chatId, telegramId, from, to, select
   const selectedTypes = normalizeSelectedTypes(selectedMap);
   const rows = await fetchWorkLogs(telegramId, adjustedFrom, to, selectedTypes);
   const summary = summarizeLogs(rows);
+  const paidTotal = rows.filter((r) => r.is_paid).reduce((acc, r) => acc + Number(r.amount || 0), 0);
+  const unpaidTotal = rows.filter((r) => !r.is_paid).reduce((acc, r) => acc + Number(r.amount || 0), 0);
 
   const prettyFrom = formatDatePretty(adjustedFrom, lang);
   const prettyTo = formatDatePretty(to, lang);
@@ -299,8 +309,7 @@ export async function sendStatsSummary(bot, chatId, telegramId, from, to, select
     `🧾 Записей: ${rows.length}`,
     `🚛 OTR: ${summary.otr}`,
     `🏙 Local: ${summary.local}`,
-    `📍 Boise: ${summary.boise}`,
-    `📌 Boise Custom: ${summary.boise_custom}`,
+    `💵 Кастом прайс: ${summary.boise + summary.boise_custom}`,
     `💵 Total: $${summary.total.toFixed(2)}`
   ].join('\n'));
 }

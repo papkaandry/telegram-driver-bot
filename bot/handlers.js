@@ -1,5 +1,5 @@
 import { pool } from '../db.js';
-import { ADMIN_ID, GROUP_CHAT_ID, WORK_TYPES, TYPE_LABELS, TIMEZONE, t } from './constants.js';
+import { ADMIN_ID, FILTER_WORK_TYPES, GROUP_CHAT_ID, WORK_TYPES, TYPE_LABELS, TIMEZONE, menuText, t } from './constants.js';
 import { getMainKeyboard, getCancelInlineKeyboard, getStatsTypeSelectionKeyboard } from './keyboards.js';
 import { getState, setState, clearState } from './state.js';
 import {
@@ -21,7 +21,8 @@ import {
   getLastPaymentPeriod,
   createPaymentPeriod,
   calculateOutstandingDebt,
-  deleteDriverCompletely
+  deleteDriverCompletely,
+  clearUserWorkData
 } from './data.js';
 import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, sendPeriodExcelAllDrivers, nextPaymentFrom } from './reports.js';
 
@@ -40,7 +41,7 @@ function daysInMonth(isoMonth) {
 
 function monthTitle(isoMonth) {
   const [y, m] = isoMonth.split('-').map(Number);
-  return new Intl.DateTimeFormat('ru-RU', {
+  return new Intl.DateTimeFormat('uk-UA', {
     timeZone: 'UTC',
     month: 'long',
     year: 'numeric'
@@ -81,8 +82,7 @@ function buildAddWorkTypeKeyboard(targetId) {
     inline_keyboard: [
       [{ text: '🚛 OTR', callback_data: `admin:addwork:type:${targetId}:otr` }],
       [{ text: '🏙 Local', callback_data: `admin:addwork:type:${targetId}:local` }],
-      [{ text: '📍 Boise', callback_data: `admin:addwork:type:${targetId}:boise` }],
-      [{ text: '📍 Boise Custom', callback_data: `admin:addwork:type:${targetId}:boise_custom` }],
+      [{ text: '💵 Кастом прайс', callback_data: `admin:addwork:type:${targetId}:boise_custom` }],
       [{ text: '❌ Скасувати', callback_data: 'cancel_input' }]
     ]
   };
@@ -150,7 +150,7 @@ async function sendAdminLink(bot, chatId, lang) {
 }
 
 async function startStatsFilterFlow(bot, chatId, telegramId, from, to) {
-  const selected = { otr: true, local: true, boise: true, boise_custom: true };
+  const selected = { otr: true, local: true, boise_custom: true };
   setState(telegramId, { type: 'await_stats_filter', from, to, selected });
   await bot.sendMessage(chatId, `Оберіть типи робіт для статистики:\nПеріод: ${from} — ${to}`, {
     reply_markup: getStatsTypeSelectionKeyboard(selected)
@@ -215,10 +215,10 @@ function parseHoursOrNumber(text) {
 }
 
 function isMainActionText(text) {
-  return [
-    '🚛 OTR', '🏙 Local', '💵 Кастом прайс',
-    '📊 Stats', '🛠 Admin Menu', '💬 Звʼязок з адміном', '✅ Обнова', '⚙️ Налаштування'
-  ].includes(text);
+  const langs = ['uk', 'en'];
+  const keys = ['otr', 'local', 'custom', 'stats', 'settings', 'adminContact', 'update', 'adminMenu'];
+  const all = langs.flatMap((lng) => keys.map((k) => menuText(lng, k)));
+  return all.includes(text);
 }
 
 async function forwardDriverMessageToAdmin(bot, driverId, text) {
@@ -250,7 +250,7 @@ async function handleStateInput(bot, msg, lang) {
     if (isMainActionText(text)) {
       clearState(telegramId);
       await bot.sendMessage(chatId, 'Дію Local/Work скасовано.', {
-        reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
+        reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang)
       });
       return false;
     }
@@ -281,7 +281,7 @@ async function handleStateInput(bot, msg, lang) {
 
     clearState(telegramId);
     await bot.sendMessage(chatId, `✅ Збережено: ${TYPE_LABELS[currentState.workType]} — $${amount.toFixed(2)}`, {
-      reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
+      reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang)
     });
     await logDriverAction(bot, telegramId, `Додав роботу: ${currentState.workType}, value=${value}, amount=$${amount.toFixed(2)}`);
     return true;
@@ -386,7 +386,35 @@ async function handleStateInput(bot, msg, lang) {
   if (currentState.type === 'await_report_name') {
     await pool.query('UPDATE users SET report_name = $2 WHERE telegram_id = $1', [telegramId, text]);
     clearState(telegramId);
-    await bot.sendMessage(chatId, t(lang, 'reportNameUpdated', text), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
+    await bot.sendMessage(chatId, t(lang, 'reportNameUpdated', text), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
+    return true;
+  }
+
+
+  if (currentState.type === 'await_onboarding_rate') {
+    const value = Number(text.replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0) {
+      await bot.sendMessage(chatId, t(lang, 'invalidNumber'));
+      return true;
+    }
+
+    if (currentState.stage === 'otr') {
+      await pool.query('UPDATE users SET otr_rate = $2 WHERE telegram_id = $1', [telegramId, value]);
+      setState(telegramId, { type: 'await_onboarding_rate', stage: 'local' });
+      await bot.sendMessage(chatId, t(lang, 'onboardingLocalAsk'), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: menuText(lang, 'adminContact'), callback_data: 'settings:contact_admin' }],
+            [{ text: '❌ Скасувати / Cancel', callback_data: 'cancel_input' }]
+          ]
+        }
+      });
+      return true;
+    }
+
+    await pool.query('UPDATE users SET local_rate = $2 WHERE telegram_id = $1', [telegramId, value]);
+    clearState(telegramId);
+    await bot.sendMessage(chatId, t(lang, 'onboardingDone'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
     return true;
   }
 
@@ -407,7 +435,7 @@ async function handleStateInput(bot, msg, lang) {
       try { await bot.sendMessage(row.telegram_id, text); ok += 1; } catch { fail += 1; }
     }
     clearState(telegramId);
-    await bot.sendMessage(chatId, t(lang, 'broadcastDone', ok, fail), { reply_markup: getMainKeyboard(true) });
+    await bot.sendMessage(chatId, t(lang, 'broadcastDone', ok, fail), { reply_markup: getMainKeyboard(true, lang) });
     return true;
   }
 
@@ -498,11 +526,11 @@ async function handleTextInput(bot, msg) {
       supportSessions.delete(telegramId);
     }
     clearState(telegramId);
-    await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
+    await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
     return;
   }
 
-  if (text === '💬 Звʼязок з адміном') {
+  if (text === menuText(lang, 'adminContact')) {
     if (!ADMIN_ID) {
       await sendAdminLink(bot, chatId, lang);
       return;
@@ -520,7 +548,7 @@ async function handleTextInput(bot, msg) {
     return;
   }
 
-  if (text === '✅ Обнова' && telegramId === ADMIN_ID) {
+  if (text === menuText(lang, 'update') && telegramId === ADMIN_ID) {
     const { rows } = await pool.query('SELECT telegram_id FROM users WHERE approved = true');
     const updateText = '🚀 Бот оновився. Використовуйте команду /start для коректної роботи.';
     for (const row of rows) await bot.sendMessage(row.telegram_id, updateText).catch(() => {});
@@ -532,7 +560,7 @@ async function handleTextInput(bot, msg) {
   const handledState = await handleStateInput(bot, msg, lang);
   if (handledState) return;
 
-  if (text === '📊 Stats') {
+  if (text === menuText(lang, 'stats')) {
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'selectAction'), {
       reply_markup: {
@@ -551,11 +579,13 @@ async function handleTextInput(bot, msg) {
     return;
   }
 
-  if (text === '⚙️ Налаштування') {
+  if (text === menuText(lang, 'settings')) {
     await bot.sendMessage(chatId, t(lang, 'settingsTitle'), {
       reply_markup: {
         inline_keyboard: [
           [{ text: '✏️ Імʼя в Excel', callback_data: 'settings:report_name' }],
+          [{ text: '💬 Звʼязок з адміном', callback_data: 'settings:contact_admin' }],
+          [{ text: '🗑 Видалити всю роботу', callback_data: 'settings:clear_work' }],
           [{ text: '🇺🇦 Українська', callback_data: 'settings:lang:uk' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
         ]
       }
@@ -563,7 +593,7 @@ async function handleTextInput(bot, msg) {
     return;
   }
 
-  if (text === '🛠 Admin Menu' && telegramId === ADMIN_ID) {
+  if (text === menuText(lang, 'adminMenu') && telegramId === ADMIN_ID) {
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'adminMenu'), {
       reply_markup: {
@@ -579,19 +609,19 @@ async function handleTextInput(bot, msg) {
 
   const user = await fetchUser(telegramId);
 
-  if (text === '🚛 OTR') {
+  if (text === menuText(lang, 'otr')) {
     setState(telegramId, { type: 'await_work_value', workType: 'otr' });
     await bot.sendMessage(chatId, 'Введіть милі для OTR:', { reply_markup: getCancelInlineKeyboard() });
     return;
   }
 
-  if (text === '🏙 Local') {
+  if (text === menuText(lang, 'local')) {
     setState(telegramId, { type: 'await_work_value', workType: 'local' });
     await bot.sendMessage(chatId, 'Введіть години для Local (наприклад 6:23 або 6.5):', { reply_markup: getCancelInlineKeyboard() });
     return;
   }
 
-  if (text === '💵 Кастом прайс') {
+  if (text === menuText(lang, 'custom')) {
     setState(telegramId, { type: 'await_work_value', workType: 'boise_custom' });
     await bot.sendMessage(chatId, 'Введіть суму за кастом прайс:', { reply_markup: getCancelInlineKeyboard() });
     return;
@@ -623,7 +653,7 @@ async function handleCallback(bot, query) {
     }
     clearState(telegramId);
     await bot.answerCallbackQuery(query.id, { text: t(lang, 'canceled') });
-    await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID) });
+    await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
     return;
   }
 
@@ -665,7 +695,7 @@ async function handleCallback(bot, query) {
     }
 
     const [, action, type] = payload.split(':');
-    if (action === 'toggle' && WORK_TYPES.includes(type)) {
+    if (action === 'toggle' && FILTER_WORK_TYPES.includes(type)) {
       current.selected[type] = !current.selected[type];
       setState(telegramId, current);
       await bot.editMessageReplyMarkup(getStatsTypeSelectionKeyboard(current.selected), { chat_id: chatId, message_id: query.message.message_id });
@@ -674,7 +704,7 @@ async function handleCallback(bot, query) {
     }
 
     if (action === 'all' || action === 'none') {
-      WORK_TYPES.forEach((w) => { current.selected[w] = action === 'all'; });
+      FILTER_WORK_TYPES.forEach((w) => { current.selected[w] = action === 'all'; });
       setState(telegramId, current);
       await bot.editMessageReplyMarkup(getStatsTypeSelectionKeyboard(current.selected), { chat_id: chatId, message_id: query.message.message_id });
       await bot.answerCallbackQuery(query.id);
@@ -743,7 +773,7 @@ async function handleCallback(bot, query) {
 
     clearState(telegramId);
     await bot.sendMessage(chatId, `✅ Збережено: Boise — $${Number(current.amount).toFixed(2)}`, {
-      reply_markup: getMainKeyboard(telegramId === ADMIN_ID)
+      reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang)
     });
     await logDriverAction(bot, telegramId, `Додав роботу: boise, amount=$${Number(current.amount).toFixed(2)}`);
     await bot.answerCallbackQuery(query.id, { text: 'Збережено' });
@@ -765,8 +795,9 @@ async function handleCallback(bot, query) {
     const targetId = payload.split(':')[2];
     supportSessions.delete(targetId);
     clearState(targetId);
+    const targetLang = await getUserLang(targetId);
     await bot.sendMessage(targetId, '✅ Чат з адміном завершено.', {
-      reply_markup: getMainKeyboard(false)
+      reply_markup: getMainKeyboard(false, targetLang)
     }).catch(() => {});
     await bot.sendMessage(chatId, `✅ Чат з ${targetId} завершено.`);
     await bot.answerCallbackQuery(query.id);
@@ -778,10 +809,38 @@ async function handleCallback(bot, query) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '✏️ Імʼя в Excel', callback_data: 'settings:report_name' }],
+          [{ text: '💬 Звʼязок з адміном', callback_data: 'settings:contact_admin' }],
+          [{ text: '🗑 Видалити всю роботу', callback_data: 'settings:clear_work' }],
           [{ text: '🇺🇦 Українська', callback_data: 'settings:lang:uk' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
         ]
       }
     });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'settings:contact_admin') {
+    await sendAdminLink(bot, chatId, lang);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'settings:clear_work') {
+    await bot.sendMessage(chatId, t(lang, 'clearWorkConfirm'), {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Так, видалити', callback_data: 'settings:clear_work:confirm' }],
+          [{ text: '❌ Скасувати', callback_data: 'cancel_input' }]
+        ]
+      }
+    });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'settings:clear_work:confirm') {
+    await clearUserWorkData(telegramId);
+    await bot.sendMessage(chatId, t(lang, 'clearWorkDone'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -800,7 +859,9 @@ async function handleCallback(bot, query) {
       return;
     }
     await pool.query('UPDATE users SET lang = $2 WHERE telegram_id = $1', [telegramId, selectedLang]);
-    await bot.sendMessage(chatId, t(selectedLang, 'languageUpdated', selectedLang));
+    await bot.sendMessage(chatId, t(selectedLang, 'languageUpdated', selectedLang), {
+      reply_markup: getMainKeyboard(telegramId === ADMIN_ID, selectedLang)
+    });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -1003,6 +1064,18 @@ async function handleCallback(bot, query) {
     const approvedValue = action === 'approve';
     await pool.query('UPDATE users SET approved = $2 WHERE telegram_id = $1', [targetId, approvedValue]);
     await bot.sendMessage(chatId, `Користувач ${targetId}: ${approvedValue ? 'підтверджений' : 'заблокований'}`);
+    if (approvedValue) {
+      const targetLang = await getUserLang(targetId);
+      setState(targetId, { type: 'await_onboarding_rate', stage: 'otr' });
+      await bot.sendMessage(targetId, t(targetLang, 'onboardingOtrAsk'), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: menuText(targetLang, 'adminContact'), callback_data: 'settings:contact_admin' }],
+            [{ text: '❌ Скасувати / Cancel', callback_data: 'cancel_input' }]
+          ]
+        }
+      }).catch(() => {});
+    }
     await showDriverActions(bot, chatId, targetId);
     await bot.answerCallbackQuery(query.id);
     return;
@@ -1029,7 +1102,7 @@ export function setupBot(bot) {
       }
 
       await bot.sendMessage(msg.chat.id, isAdmin ? t(lang, 'adminPanel') : t(lang, 'welcome'), {
-        reply_markup: getMainKeyboard(isAdmin)
+        reply_markup: getMainKeyboard(isAdmin, lang)
       });
     } catch (error) {
       console.error('[BOT] /start error:', error);

@@ -1,14 +1,14 @@
-import { TYPE_LABELS, WORK_TYPES } from './constants.js';
+import { FILTER_WORK_TYPES, TYPE_LABELS, menuText } from './constants.js';
 
-export function getMainKeyboard(isAdmin) {
+export function getMainKeyboard(isAdmin, lang = 'uk') {
   const keyboard = [
-    [{ text: '🚛 OTR' }, { text: '🏙 Local' }],
-    [{ text: '💵 Кастом прайс' }, { text: '📊 Stats' }],
-    [{ text: '⚙️ Налаштування' }, { text: '💬 Звʼязок з адміном' }]
+    [{ text: menuText(lang, 'otr') }, { text: menuText(lang, 'local') }],
+    [{ text: menuText(lang, 'custom') }, { text: menuText(lang, 'stats') }],
+    [{ text: menuText(lang, 'settings') }]
   ];
 
   if (isAdmin) {
-    keyboard.push([{ text: '✅ Обнова' }, { text: '🛠 Admin Menu' }]);
+    keyboard.push([{ text: menuText(lang, 'update') }, { text: menuText(lang, 'adminMenu') }]);
   }
 
   return { keyboard, resize_keyboard: true, persistent: true };
@@ -28,8 +28,8 @@ export function getStatsTypeSelectionKeyboard(selected) {
 
   return {
     inline_keyboard: [
-      [button(WORK_TYPES[0]), button(WORK_TYPES[1])],
-      [button(WORK_TYPES[2]), button(WORK_TYPES[3])],
+      [button(FILTER_WORK_TYPES[0]), button(FILTER_WORK_TYPES[1])],
+      [button(FILTER_WORK_TYPES[2])],
       [{ text: '📊 Показати статистику', callback_data: 'sf:show' }],
       [{ text: '♻️ Вибрати все', callback_data: 'sf:all' }, { text: '🧹 Зняти все', callback_data: 'sf:none' }],
       [{ text: '❌ Скасувати', callback_data: 'cancel_input' }]

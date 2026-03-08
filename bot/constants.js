@@ -3,11 +3,35 @@ export const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
 export const TIMEZONE = 'America/Vancouver';
 
 export const WORK_TYPES = ['otr', 'local', 'boise', 'boise_custom'];
+export const FILTER_WORK_TYPES = ['otr', 'local', 'boise_custom'];
 export const TYPE_LABELS = {
   otr: 'OTR',
   local: 'Local',
-  boise: 'Boise',
+  boise: 'Кастом прайс',
   boise_custom: 'Кастом прайс'
+};
+
+export const MAIN_MENU_TEXTS = {
+  uk: {
+    otr: '🚛 OTR',
+    local: '🏙 Local',
+    custom: '💵 Кастом прайс',
+    stats: '📊 Stats',
+    settings: '⚙️ Налаштування',
+    adminContact: '💬 Звʼязок з адміном',
+    update: '✅ Обнова',
+    adminMenu: '🛠 Admin Menu'
+  },
+  en: {
+    otr: '🚛 OTR',
+    local: '🏙 Local',
+    custom: '💵 Custom price',
+    stats: '📊 Stats',
+    settings: '⚙️ Settings',
+    adminContact: '💬 Contact admin',
+    update: '✅ Update',
+    adminMenu: '🛠 Admin Menu'
+  }
 };
 
 export const I18N = {
@@ -40,7 +64,12 @@ export const I18N = {
     deleteConfirm: (name, id) => `⚠️ Видалити водія ${name} (${id}) та всі його дані?`,
     deleteDone: (id) => `✅ Водія ${id} видалено разом із усіма даними.`,
     updateBroadcastDone: '✅ Усім відправлено: бот оновлено.',
-    adminMissing: '⚠️ ADMIN_ID не задано. Звʼязок з адміном недоступний.'
+    adminMissing: '⚠️ ADMIN_ID не задано. Звʼязок з адміном недоступний.',
+    clearWorkConfirm: '⚠️ Видалити ВСЮ вашу роботу та історію оплат?',
+    clearWorkDone: '✅ Усі ваші записи роботи та оплати видалено.',
+    onboardingOtrAsk: 'Вас підтверджено ✅\nВкажіть вашу ставку за милю (OTR), наприклад: 0.7',
+    onboardingLocalAsk: 'Тепер вкажіть вашу погодинну ставку за Local, наприклад: 30',
+    onboardingDone: '✅ Ставки збережено. Можете працювати з ботом.'
   },
   en: {
     welcome: 'Welcome!',
@@ -71,9 +100,18 @@ export const I18N = {
     deleteConfirm: (name, id) => `⚠️ Delete driver ${name} (${id}) and all their data?`,
     deleteDone: (id) => `✅ Driver ${id} deleted with all data.`,
     updateBroadcastDone: '✅ Sent to all: bot updated.',
-    adminMissing: '⚠️ ADMIN_ID is not set. Admin contact unavailable.'
+    adminMissing: '⚠️ ADMIN_ID is not set. Admin contact unavailable.',
+    clearWorkConfirm: '⚠️ Delete ALL your work and payment history?',
+    clearWorkDone: '✅ All your work and payment records were deleted.',
+    onboardingOtrAsk: 'You are approved ✅\nEnter your OTR per-mile rate, for example: 0.7',
+    onboardingLocalAsk: 'Now enter your Local hourly rate, for example: 30',
+    onboardingDone: '✅ Rates saved. You can now use the bot.'
   }
 };
+
+export function menuText(lang, key) {
+  return (MAIN_MENU_TEXTS[lang] || MAIN_MENU_TEXTS.uk)[key] || MAIN_MENU_TEXTS.uk[key] || key;
+}
 
 export function t(lang, key, ...args) {
   const dict = I18N[lang] || I18N.uk;

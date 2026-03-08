@@ -1,5 +1,5 @@
 import { pool } from '../db.js';
-import { ADMIN_ID, WORK_TYPES } from './constants.js';
+import { ADMIN_ID, FILTER_WORK_TYPES, WORK_TYPES } from './constants.js';
 import { addDays } from './date.js';
 
 export async function fetchUser(telegramId) {
@@ -85,14 +85,35 @@ export async function calculateOutstandingDebt(telegramId, todayISO) {
 }
 
 export function normalizeSelectedTypes(selectedMap) {
-  const selected = WORK_TYPES.filter((type) => selectedMap?.[type]);
-  return selected.length ? selected : [...WORK_TYPES];
+  const selected = FILTER_WORK_TYPES.filter((type) => selectedMap?.[type]);
+  const effective = selected.length ? selected : [...FILTER_WORK_TYPES];
+  const expanded = [];
+  if (effective.includes('otr')) expanded.push('otr');
+  if (effective.includes('local')) expanded.push('local');
+  if (effective.includes('boise_custom')) expanded.push('boise', 'boise_custom');
+  return expanded;
 }
 
 export function getAdjustedFrom(from, lastPaidTo) {
   if (!lastPaidTo) return from;
   const next = addDays(lastPaidTo, 1);
   return next > from ? next : from;
+}
+
+
+export async function clearUserWorkData(telegramId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM work_logs WHERE telegram_id = $1', [telegramId]);
+    await client.query('DELETE FROM payment_periods WHERE telegram_id = $1', [telegramId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function deleteDriverCompletely(targetId) {
