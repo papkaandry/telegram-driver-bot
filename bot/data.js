@@ -9,7 +9,7 @@ export async function fetchUser(telegramId) {
 
 export async function getUserLang(telegramId) {
   const user = await fetchUser(telegramId);
-  return user?.lang === 'en' ? 'en' : 'ru';
+  return user?.lang === 'en' ? 'en' : 'uk';
 }
 
 export async function registerUser(telegramId, name) {

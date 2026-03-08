@@ -27,7 +27,7 @@ export async function initDB() {
         role TEXT NOT NULL DEFAULT 'driver',
         email TEXT,
         report_name TEXT,
-        lang TEXT NOT NULL DEFAULT 'ru',
+        lang TEXT NOT NULL DEFAULT 'uk',
         otr_rate NUMERIC NOT NULL DEFAULT 0.65,
         local_rate NUMERIC NOT NULL DEFAULT 25,
         boise_rate NUMERIC NOT NULL DEFAULT 630,
@@ -37,7 +37,7 @@ export async function initDB() {
     `);
 
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS report_name TEXT;`);
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru';`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uk';`);
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'driver';`);
 
     await pool.query(`

@@ -3,8 +3,8 @@ import { TYPE_LABELS, WORK_TYPES } from './constants.js';
 export function getMainKeyboard(isAdmin) {
   const keyboard = [
     [{ text: '🚛 OTR' }, { text: '🏙 Local' }],
-    [{ text: '📍 Boise' }, { text: '📍 Boise Custom' }],
-    [{ text: '📊 Stats' }, { text: '💬 Связаться с админом' }]
+    [{ text: '💵 Кастом прайс' }, { text: '📊 Stats' }],
+    [{ text: '⚙️ Налаштування' }, { text: '💬 Звʼязок з адміном' }]
   ];
 
   if (isAdmin) {
@@ -16,7 +16,7 @@ export function getMainKeyboard(isAdmin) {
 
 export function getCancelInlineKeyboard() {
   return {
-    inline_keyboard: [[{ text: '❌ Отмена / Cancel', callback_data: 'cancel_input' }]]
+    inline_keyboard: [[{ text: '❌ Скасувати / Cancel', callback_data: 'cancel_input' }]]
   };
 }
 
@@ -30,9 +30,9 @@ export function getStatsTypeSelectionKeyboard(selected) {
     inline_keyboard: [
       [button(WORK_TYPES[0]), button(WORK_TYPES[1])],
       [button(WORK_TYPES[2]), button(WORK_TYPES[3])],
-      [{ text: '📊 Показать статистику', callback_data: 'sf:show' }],
-      [{ text: '♻️ Выбрать всё', callback_data: 'sf:all' }, { text: '🧹 Снять всё', callback_data: 'sf:none' }],
-      [{ text: '❌ Отмена', callback_data: 'cancel_input' }]
+      [{ text: '📊 Показати статистику', callback_data: 'sf:show' }],
+      [{ text: '♻️ Вибрати все', callback_data: 'sf:all' }, { text: '🧹 Зняти все', callback_data: 'sf:none' }],
+      [{ text: '❌ Скасувати', callback_data: 'cancel_input' }]
     ]
   };
 }

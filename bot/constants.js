@@ -7,40 +7,40 @@ export const TYPE_LABELS = {
   otr: 'OTR',
   local: 'Local',
   boise: 'Boise',
-  boise_custom: 'Boise Custom'
+  boise_custom: 'Кастом прайс'
 };
 
 export const I18N = {
-  ru: {
-    welcome: 'Добро пожаловать!',
-    adminPanel: '👑 Админ панель',
-    waitingApproval: '⏳ Ожидайте одобрения админа.',
-    blocked: '⛔ Доступ закрыт до одобрения админом.',
-    selectAction: 'Выберите действие:',
-    canceled: 'Действие отменено.',
-    unknownCommand: 'Неизвестная команда.',
-    invalidNumber: 'Введите положительное число.',
+  uk: {
+    welcome: 'Ласкаво просимо!',
+    adminPanel: '👑 Адмін панель',
+    waitingApproval: '⏳ Очікуйте підтвердження від адміна.',
+    blocked: '⛔ Доступ закрито до підтвердження адміном.',
+    selectAction: 'Оберіть дію:',
+    canceled: 'Дію скасовано.',
+    unknownCommand: 'Невідома команда.',
+    invalidNumber: 'Введіть додатне число.',
     invalidDateRange: 'Формат: YYYY-MM-DD YYYY-MM-DD',
-    noDataPeriod: (from, to) => `📭 За период ${from} — ${to} у вас не было работы.`,
-    statsTitle: (from, to) => `📊 Статистика за период ${from} — ${to}`,
-    settingsTitle: '⚙️ Настройки:',
-    reportNameAsk: 'Введите имя, которое использовать в Excel:',
-    reportNameUpdated: (name) => `✅ Имя для Excel обновлено: ${name}`,
-    languageUpdated: (lang) => `✅ Язык обновлён: ${lang.toUpperCase()}`,
-    paymentIntro: '💳 Оплата за период\nЭто нужно, чтобы бот показывал, сколько компания ещё должна вам денег.',
-    paymentSaved: (from, to, paid) => `✅ Оплата сохранена: ${from} — ${to}\nОплачено: $${paid.toFixed(2)}`,
-    debtAfterPayment: (from, to, total) => `💰 Долг после оплаты (${from} — ${to}): $${total.toFixed(2)}`,
-    adminMenu: '🛠 Админ меню:',
-    driversEmpty: 'Водителей пока нет.',
-    askBroadcast: 'Введите сообщение для рассылки всем водителям:',
-    broadcastDone: (ok, fail) => `✅ Рассылка завершена. Успешно: ${ok}, Ошибок: ${fail}`,
-    todayExcelDone: '✅ Отчёт за сегодня отправлен в группу.',
-    todayExcelNoGroup: '❌ GROUP_CHAT_ID не задан. Невозможно отправить отчёт в группу.',
-    todayExcelNoData: 'ℹ️ За сегодня нет данных для отчёта.',
-    deleteConfirm: (name, id) => `⚠️ Удалить водителя ${name} (${id}) и все его данные?`,
-    deleteDone: (id) => `✅ Водитель ${id} удалён вместе со всеми данными.`,
-    updateBroadcastDone: '✅ Отправлено всем: бот обновлён.',
-    adminMissing: '⚠️ ADMIN_ID не задан. Связь с админом недоступна.'
+    noDataPeriod: (from, to) => `📭 За період ${from} — ${to} у вас не було роботи.`,
+    statsTitle: (from, to) => `📊 Статистика за період ${from} — ${to}`,
+    settingsTitle: '⚙️ Налаштування:',
+    reportNameAsk: 'Введіть імʼя для Excel:',
+    reportNameUpdated: (name) => `✅ Імʼя для Excel оновлено: ${name}`,
+    languageUpdated: (lang) => `✅ Мову оновлено: ${lang.toUpperCase()}`,
+    paymentIntro: '💳 Оплата за період\nЦе потрібно, щоб бот показував, скільки компанія ще вам винна.',
+    paymentSaved: (from, to, paid) => `✅ Оплату збережено: ${from} — ${to}\nОплачено: $${paid.toFixed(2)}`,
+    debtAfterPayment: (from, to, total) => `💰 Борг після оплати (${from} — ${to}): $${total.toFixed(2)}`,
+    adminMenu: '🛠 Адмін меню:',
+    driversEmpty: 'Водіїв поки немає.',
+    askBroadcast: 'Введіть повідомлення для розсилки всім водіям:',
+    broadcastDone: (ok, fail) => `✅ Розсилку завершено. Успішно: ${ok}, Помилок: ${fail}`,
+    todayExcelDone: '✅ Звіт за сьогодні відправлено в групу.',
+    todayExcelNoGroup: '❌ GROUP_CHAT_ID не задано. Неможливо відправити звіт у групу.',
+    todayExcelNoData: 'ℹ️ За сьогодні немає даних для звіту.',
+    deleteConfirm: (name, id) => `⚠️ Видалити водія ${name} (${id}) та всі його дані?`,
+    deleteDone: (id) => `✅ Водія ${id} видалено разом із усіма даними.`,
+    updateBroadcastDone: '✅ Усім відправлено: бот оновлено.',
+    adminMissing: '⚠️ ADMIN_ID не задано. Звʼязок з адміном недоступний.'
   },
   en: {
     welcome: 'Welcome!',
@@ -76,7 +76,7 @@ export const I18N = {
 };
 
 export function t(lang, key, ...args) {
-  const dict = I18N[lang] || I18N.ru;
-  const value = dict[key] ?? I18N.ru[key] ?? key;
+  const dict = I18N[lang] || I18N.uk;
+  const value = dict[key] ?? I18N.uk[key] ?? key;
   return typeof value === 'function' ? value(...args) : value;
 }
