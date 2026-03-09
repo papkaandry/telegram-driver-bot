@@ -129,7 +129,7 @@ export async function sendExcelToChat(bot, chatId, telegramId, from, to, caption
   const { filePath, rows, summary, paidTotal, unpaidTotal } = await buildExcelReport({ telegramId, from, to });
   try {
     await bot.sendDocument(chatId, filePath, {
-      caption: `${captionPrefix}\nПеріод: ${from} — ${to}\nЗаписів: ${rows.length}\nTotal: $${summary.total.toFixed(2)}\nPaid: $${paidTotal.toFixed(2)}\nUnpaid: $${unpaidTotal.toFixed(2)}`
+      caption: `${captionPrefix}\nPeriod: ${from} — ${to}\nRecords: ${rows.length}\nTotal: $${summary.total.toFixed(2)}\nPaid: $${paidTotal.toFixed(2)}\nUnpaid: $${unpaidTotal.toFixed(2)}`
     });
   } finally {
     await fs.unlink(filePath).catch(() => {});
@@ -177,7 +177,7 @@ export async function sendTodayExcelToGroup(bot, noGroupText, noDataText) {
 
   try {
     await bot.sendDocument(GROUP_CHAT_ID, filePath, {
-      caption: `📁 Полный отчёт за сегодня (${today})\nЗаписей: ${rows.length}\nИтого: $${total.toFixed(2)}`
+      caption: `📁 Full report for today (${today})\nRecords: ${rows.length}\nTotal: $${total.toFixed(2)}`
     });
   } finally {
     await fs.unlink(filePath).catch(() => {});
@@ -277,7 +277,7 @@ export async function sendPeriodExcelAllDrivers(bot, from, to, adminChatId, admi
   await workbook.xlsx.writeFile(filePath);
 
   try {
-    const caption = `📁 Отчёт по всем драйверам\nПериод: ${from} — ${to}\nЗаписей: ${globalRows}`;
+    const caption = `📁 Report for all drivers\nPeriod: ${from} — ${to}\nRecords: ${globalRows}`;
     await bot.sendDocument(adminChatId, filePath, { caption });
     if (GROUP_CHAT_ID) {
       await bot.sendDocument(GROUP_CHAT_ID, filePath, { caption });
@@ -306,10 +306,10 @@ export async function sendStatsSummary(bot, chatId, telegramId, from, to, select
 
   await bot.sendMessage(chatId, [
     textBuilder.title(prettyFrom, prettyTo),
-    `🧾 Записей: ${rows.length}`,
+    `🧾 Records: ${rows.length}`,
     `🚛 OTR: ${summary.otr + summary.otr_gross}`,
     `🏙 Local: ${summary.local}`,
-    `💵 Кастом прайс: ${summary.boise + summary.boise_custom}`,
+    `💵 Custom price: ${summary.boise + summary.boise_custom}`,
     `💵 Total: $${summary.total.toFixed(2)}`
   ].join('\n'));
 }
