@@ -189,7 +189,7 @@ async function showDriverActions(bot, chatId, targetId) {
 
   await bot.sendMessage(
     chatId,
-    `👤 ${user.name || 'Driver'} (${targetId})\nСтатус: ${user.approved ? '✅ підтверджено' : '⬜ очікує'}\nRates: OTR ${user.otr_rate}, Local ${user.local_rate}, Boise ${user.boise_rate}`,
+    `👤 ${user.name || 'Driver'} (${targetId})\nСтатус: ${user.approved ? '✅ підтверджено' : '⬜ очікує'}\nRates: OTR ${user.otr_rate}, Local ${user.local_rate}`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -461,12 +461,12 @@ async function handleStateInput(bot, msg, lang) {
   }
 
   if (currentState.type === 'await_set_rates' && telegramId === ADMIN_ID) {
-    const [otr, local, boise] = text.split(/\s+/).map((x) => Number(x.replace(',', '.')));
-    if (![otr, local, boise].every((n) => Number.isFinite(n) && n >= 0)) {
-      await bot.sendMessage(chatId, 'Некоректний формат. Приклад: 0.7 30 650');
+    const [otr, local] = text.split(/\s+/).map((x) => Number(x.replace(',', '.')));
+    if (![otr, local].every((n) => Number.isFinite(n) && n >= 0)) {
+      await bot.sendMessage(chatId, 'Некоректний формат. Приклад: 0.7 30');
       return true;
     }
-    await pool.query('UPDATE users SET otr_rate=$2, local_rate=$3, boise_rate=$4 WHERE telegram_id=$1', [currentState.targetId, otr, local, boise]);
+    await pool.query('UPDATE users SET otr_rate=$2, local_rate=$3 WHERE telegram_id=$1', [currentState.targetId, otr, local]);
     clearState(telegramId);
     await bot.sendMessage(chatId, `✅ Ставки оновлено для ${currentState.targetId}`);
     await showDriverActions(bot, chatId, currentState.targetId);
@@ -820,7 +820,15 @@ async function handleCallback(bot, query) {
   }
 
   if (payload === 'settings:contact_admin') {
-    await sendAdminLink(bot, chatId, lang);
+    if (!ADMIN_ID) {
+      await sendAdminLink(bot, chatId, lang);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    setState(telegramId, { type: 'await_support_message' });
+    await bot.sendMessage(chatId, 'Напишіть повідомлення для адміна. Я передам його і зʼєднаю вас у чаті.', {
+      reply_markup: getCancelInlineKeyboard()
+    });
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -882,7 +890,7 @@ async function handleCallback(bot, query) {
   if (payload.startsWith('admin:rates:') && telegramId === ADMIN_ID) {
     const targetId = payload.split(':')[2];
     setState(telegramId, { type: 'await_set_rates', targetId });
-    await bot.sendMessage(chatId, 'Введіть ставки у форматі: otr local boise\nПриклад: 0.7 30 650', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Введіть ставки у форматі: otr local\nПриклад: 0.7 30', { reply_markup: getCancelInlineKeyboard() });
     await bot.answerCallbackQuery(query.id);
     return;
   }
