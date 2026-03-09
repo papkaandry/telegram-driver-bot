@@ -1,9 +1,10 @@
 import { FILTER_WORK_TYPES, TYPE_LABELS, menuText } from './constants.js';
 
-export function getMainKeyboard(isAdmin, lang = 'uk') {
+export function getMainKeyboard(isAdmin, lang = 'en') {
   const keyboard = [
     [{ text: menuText(lang, 'otr') }, { text: menuText(lang, 'local') }],
-    [{ text: menuText(lang, 'custom') }, { text: menuText(lang, 'stats') }],
+    [{ text: menuText(lang, 'custom') }, { text: menuText(lang, 'grossPercent') }],
+    [{ text: menuText(lang, 'stats') }],
     [{ text: menuText(lang, 'settings') }, { text: menuText(lang, 'donate') }]
   ];
 

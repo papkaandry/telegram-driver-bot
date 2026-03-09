@@ -307,7 +307,7 @@ export async function sendStatsSummary(bot, chatId, telegramId, from, to, select
   await bot.sendMessage(chatId, [
     textBuilder.title(prettyFrom, prettyTo),
     `🧾 Записей: ${rows.length}`,
-    `🚛 OTR: ${summary.otr}`,
+    `🚛 OTR: ${summary.otr + summary.otr_gross}`,
     `🏙 Local: ${summary.local}`,
     `💵 Кастом прайс: ${summary.boise + summary.boise_custom}`,
     `💵 Total: $${summary.total.toFixed(2)}`

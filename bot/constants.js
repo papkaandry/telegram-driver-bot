@@ -2,31 +2,34 @@ export const ADMIN_ID = process.env.ADMIN_ID;
 export const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID;
 export const TIMEZONE = 'America/Vancouver';
 
-export const WORK_TYPES = ['otr', 'local', 'boise', 'boise_custom'];
+export const WORK_TYPES = ['otr', 'otr_gross', 'local', 'boise', 'boise_custom'];
 export const FILTER_WORK_TYPES = ['otr', 'local', 'boise_custom'];
 export const TYPE_LABELS = {
   otr: 'OTR',
   local: 'Local',
-  boise: 'Кастом прайс',
-  boise_custom: 'Кастом прайс'
+  boise: 'Custom price',
+  boise_custom: 'Custom price',
+  otr_gross: '% from gross'
 };
 
 export const MAIN_MENU_TEXTS = {
   uk: {
     otr: '🚛 OTR',
     local: '🏙 Local',
-    custom: '💵 Кастом прайс',
+    custom: '💵 Custom price',
+    grossPercent: '📈 % from gross',
     stats: '📊 Stats',
-    settings: '⚙️ Налаштування',
-    donate: '❤️ Підтримати розробку',
-    adminContact: '💬 Звʼязок з адміном',
-    update: '✅ Обнова',
+    settings: '⚙️ Settings',
+    donate: '❤️ Support development',
+    adminContact: '💬 Contact admin',
+    update: '✅ Update',
     adminMenu: '🛠 Admin Menu'
   },
   en: {
     otr: '🚛 OTR',
     local: '🏙 Local',
     custom: '💵 Custom price',
+    grossPercent: '📈 % from gross',
     stats: '📊 Stats',
     settings: '⚙️ Settings',
     donate: '❤️ Support development',
@@ -107,16 +110,28 @@ export const I18N = {
     clearWorkDone: '✅ All your work and payment records were deleted.',
     onboardingOtrAsk: 'You are approved ✅\nEnter your OTR per-mile rate, for example: 0.7',
     onboardingLocalAsk: 'Now enter your Local hourly rate, for example: 30',
-    onboardingDone: '✅ Rates saved. You can now use the bot.'
+    onboardingDone: '✅ Rates saved. You can now use the bot.',
+    onboardingLocalUseAsk: 'Do you work Local?',
+    onboardingOtrUseAsk: 'Do you work OTR?',
+    onboardingOtrModeAsk: 'How are you paid in OTR?',
+    onboardingOtrModeMiles: 'Per mile',
+    onboardingOtrModePercent: 'Percent from gross',
+    onboardingLocalRateAsk: 'How much do you get paid per hour for Local? (example: 30)',
+    onboardingOtrMileRateAsk: 'How much do you get paid per mile for OTR? (example: 0.7)',
+    onboardingOtrPercentAsk: 'What percent from gross do you get paid? (example: 20)',
+    notEnabledLocal: 'Your Local mode is disabled. Contact admin in Settings.',
+    notEnabledOtr: 'Your OTR mode is disabled. Contact admin in Settings.',
+    wrongOtrModeForMiles: 'You are configured for % from gross. Use "% from gross" button.',
+    wrongOtrModeForGross: 'You are configured for per-mile OTR. Use "OTR" button.',
   }
 };
 
 export function menuText(lang, key) {
-  return (MAIN_MENU_TEXTS[lang] || MAIN_MENU_TEXTS.uk)[key] || MAIN_MENU_TEXTS.uk[key] || key;
+  return (MAIN_MENU_TEXTS[lang] || MAIN_MENU_TEXTS.en)[key] || MAIN_MENU_TEXTS.en[key] || key;
 }
 
 export function t(lang, key, ...args) {
-  const dict = I18N[lang] || I18N.uk;
-  const value = dict[key] ?? I18N.uk[key] ?? key;
+  const dict = I18N[lang] || I18N.en;
+  const value = dict[key] ?? I18N.en[key] ?? key;
   return typeof value === 'function' ? value(...args) : value;
 }

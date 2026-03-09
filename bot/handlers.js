@@ -82,7 +82,8 @@ function buildAddWorkTypeKeyboard(targetId) {
     inline_keyboard: [
       [{ text: '🚛 OTR', callback_data: `admin:addwork:type:${targetId}:otr` }],
       [{ text: '🏙 Local', callback_data: `admin:addwork:type:${targetId}:local` }],
-      [{ text: '💵 Кастом прайс', callback_data: `admin:addwork:type:${targetId}:boise_custom` }],
+      [{ text: '📈 % from gross', callback_data: `admin:addwork:type:${targetId}:otr_gross` }],
+      [{ text: '💵 Custom price', callback_data: `admin:addwork:type:${targetId}:boise_custom` }],
       [{ text: '❌ Скасувати', callback_data: 'cancel_input' }]
     ]
   };
@@ -216,7 +217,7 @@ function parseHoursOrNumber(text) {
 
 function isMainActionText(text) {
   const langs = ['uk', 'en'];
-  const keys = ['otr', 'local', 'custom', 'stats', 'settings', 'donate', 'adminContact', 'update', 'adminMenu'];
+  const keys = ['otr', 'local', 'custom', 'grossPercent', 'stats', 'settings', 'donate', 'adminContact', 'update', 'adminMenu'];
   const all = langs.flatMap((lng) => keys.map((k) => menuText(lng, k)));
   return all.includes(text);
 }
@@ -269,6 +270,7 @@ async function handleStateInput(bot, msg, lang) {
 
     let amount = 0;
     if (currentState.workType === 'otr') amount = value * Number(user.otr_rate || 0);
+    else if (currentState.workType === 'otr_gross') amount = value * (Number(user.otr_percent || 0) / 100);
     else if (currentState.workType === 'local') amount = value * Number(user.local_rate || 0);
     else if (currentState.workType === 'boise_custom') amount = value;
     else return true;
@@ -391,28 +393,46 @@ async function handleStateInput(bot, msg, lang) {
   }
 
 
-  if (currentState.type === 'await_onboarding_rate') {
+
+  if (currentState.type === 'await_onboarding_rate_local') {
     const value = Number(text.replace(',', '.'));
     if (!Number.isFinite(value) || value <= 0) {
       await bot.sendMessage(chatId, t(lang, 'invalidNumber'));
       return true;
     }
+    await pool.query('UPDATE users SET local_rate = $2 WHERE telegram_id = $1', [telegramId, value]);
 
-    if (currentState.stage === 'otr') {
-      await pool.query('UPDATE users SET otr_rate = $2 WHERE telegram_id = $1', [telegramId, value]);
-      setState(telegramId, { type: 'await_onboarding_rate', stage: 'local' });
-      await bot.sendMessage(chatId, t(lang, 'onboardingLocalAsk'), {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: menuText(lang, 'adminContact'), callback_data: 'settings:contact_admin' }],
-            [{ text: '❌ Скасувати / Cancel', callback_data: 'cancel_input' }]
-          ]
-        }
-      });
+    setState(telegramId, { type: 'await_onboarding_question', stage: 'ask_otr' });
+    await bot.sendMessage(chatId, t(lang, 'onboardingOtrUseAsk'), {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Yes', callback_data: 'onb:otr:yes' },
+          { text: '❌ No', callback_data: 'onb:otr:no' }
+        ]]
+      }
+    });
+    return true;
+  }
+
+  if (currentState.type === 'await_onboarding_rate_otr_miles') {
+    const value = Number(text.replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0) {
+      await bot.sendMessage(chatId, t(lang, 'invalidNumber'));
       return true;
     }
+    await pool.query("UPDATE users SET otr_mode='miles', otr_rate=$2, works_otr=true WHERE telegram_id=$1", [telegramId, value]);
+    clearState(telegramId);
+    await bot.sendMessage(chatId, t(lang, 'onboardingDone'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
+    return true;
+  }
 
-    await pool.query('UPDATE users SET local_rate = $2 WHERE telegram_id = $1', [telegramId, value]);
+  if (currentState.type === 'await_onboarding_rate_otr_percent') {
+    const value = Number(text.replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0 || value > 100) {
+      await bot.sendMessage(chatId, 'Enter valid percent from 0 to 100.');
+      return true;
+    }
+    await pool.query("UPDATE users SET otr_mode='percent', otr_percent=$2, works_otr=true WHERE telegram_id=$1", [telegramId, value]);
     clearState(telegramId);
     await bot.sendMessage(chatId, t(lang, 'onboardingDone'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
     return true;
@@ -490,6 +510,7 @@ async function handleStateInput(bot, msg, lang) {
     let value = raw;
     let amount;
     if (currentState.workType === 'otr') amount = value * Number(targetUser.otr_rate || 0);
+    else if (currentState.workType === 'otr_gross') amount = value * (Number(targetUser.otr_percent || 0) / 100);
     else if (currentState.workType === 'local') amount = value * Number(targetUser.local_rate || 0);
     else if (currentState.workType === 'boise_custom') amount = value;
     else {
@@ -595,8 +616,7 @@ async function handleTextInput(bot, msg) {
         inline_keyboard: [
           [{ text: '✏️ Імʼя в Excel', callback_data: 'settings:report_name' }],
           [{ text: '💬 Звʼязок з адміном', callback_data: 'settings:contact_admin' }],
-          [{ text: '🗑 Видалити всю роботу', callback_data: 'settings:clear_work' }],
-          [{ text: '🇺🇦 Українська', callback_data: 'settings:lang:uk' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
+          [{ text: '🗑 Clear all my work', callback_data: 'settings:clear_work' }]
         ]
       }
     });
@@ -620,14 +640,43 @@ async function handleTextInput(bot, msg) {
   const user = await fetchUser(telegramId);
 
   if (text === menuText(lang, 'otr')) {
+    const userCfg = await fetchUser(telegramId);
+    if (!userCfg?.works_otr) {
+      await bot.sendMessage(chatId, t(lang, 'notEnabledOtr'));
+      return;
+    }
+    if (userCfg?.otr_mode === 'percent') {
+      await bot.sendMessage(chatId, t(lang, 'wrongOtrModeForMiles'));
+      return;
+    }
     setState(telegramId, { type: 'await_work_value', workType: 'otr' });
-    await bot.sendMessage(chatId, 'Введіть милі для OTR:', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Enter miles for OTR:', { reply_markup: getCancelInlineKeyboard() });
     return;
   }
 
   if (text === menuText(lang, 'local')) {
+    const userCfg = await fetchUser(telegramId);
+    if (!userCfg?.works_local) {
+      await bot.sendMessage(chatId, t(lang, 'notEnabledLocal'));
+      return;
+    }
     setState(telegramId, { type: 'await_work_value', workType: 'local' });
-    await bot.sendMessage(chatId, 'Введіть години для Local (наприклад 6:23 або 6.5):', { reply_markup: getCancelInlineKeyboard() });
+    await bot.sendMessage(chatId, 'Enter hours for Local (for example 6:23 or 6.5):', { reply_markup: getCancelInlineKeyboard() });
+    return;
+  }
+
+  if (text === menuText(lang, 'grossPercent')) {
+    const userCfg = await fetchUser(telegramId);
+    if (!userCfg?.works_otr) {
+      await bot.sendMessage(chatId, t(lang, 'notEnabledOtr'));
+      return;
+    }
+    if (userCfg?.otr_mode !== 'percent') {
+      await bot.sendMessage(chatId, t(lang, 'wrongOtrModeForGross'));
+      return;
+    }
+    setState(telegramId, { type: 'await_work_value', workType: 'otr_gross' });
+    await bot.sendMessage(chatId, 'Enter gross amount for OTR (% from gross):', { reply_markup: getCancelInlineKeyboard() });
     return;
   }
 
@@ -820,8 +869,7 @@ async function handleCallback(bot, query) {
         inline_keyboard: [
           [{ text: '✏️ Імʼя в Excel', callback_data: 'settings:report_name' }],
           [{ text: '💬 Звʼязок з адміном', callback_data: 'settings:contact_admin' }],
-          [{ text: '🗑 Видалити всю роботу', callback_data: 'settings:clear_work' }],
-          [{ text: '🇺🇦 Українська', callback_data: 'settings:lang:uk' }, { text: '🇺🇸 English', callback_data: 'settings:lang:en' }]
+          [{ text: '🗑 Clear all my work', callback_data: 'settings:clear_work' }]
         ]
       }
     });
@@ -871,16 +919,7 @@ async function handleCallback(bot, query) {
   }
 
   if (payload.startsWith('settings:lang:')) {
-    const selectedLang = payload.split(':')[2];
-    if (!['uk', 'en'].includes(selectedLang)) {
-      await bot.answerCallbackQuery(query.id, { text: 'Invalid language' });
-      return;
-    }
-    await pool.query('UPDATE users SET lang = $2 WHERE telegram_id = $1', [telegramId, selectedLang]);
-    await bot.sendMessage(chatId, t(selectedLang, 'languageUpdated', selectedLang), {
-      reply_markup: getMainKeyboard(telegramId === ADMIN_ID, selectedLang)
-    });
-    await bot.answerCallbackQuery(query.id);
+    await bot.answerCallbackQuery(query.id, { text: 'English only' });
     return;
   }
 
@@ -955,8 +994,10 @@ async function handleCallback(bot, query) {
       const prompt = workType === 'otr'
         ? `Введіть милі для OTR (${date}):`
         : workType === 'local'
-          ? `Введіть години для Local (${date}) у форматі 6:23 або 6.5:`
-          : `Введіть суму для Boise Custom (${date}):`;
+          ? `Enter hours for Local (${date}) in format 6:23 or 6.5:`
+          : workType === 'otr_gross'
+            ? `Enter gross amount (${date}):`
+            : `Enter amount for Custom price (${date}):`;
       await bot.sendMessage(chatId, prompt, { reply_markup: getCancelInlineKeyboard() });
     }
 
@@ -1045,6 +1086,59 @@ async function handleCallback(bot, query) {
     }
   }
 
+
+  if (payload.startsWith('onb:')) {
+    const [, topic, answer] = payload.split(':');
+    const current = getState(telegramId);
+    if (!current || current.type !== 'await_onboarding_question') {
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (topic === 'local' && current.stage === 'ask_local') {
+      if (answer === 'yes') {
+        await pool.query('UPDATE users SET works_local=true WHERE telegram_id=$1', [telegramId]);
+        setState(telegramId, { type: 'await_onboarding_rate_local' });
+        await bot.sendMessage(chatId, t(lang, 'onboardingLocalRateAsk'), { reply_markup: getCancelInlineKeyboard() });
+      } else {
+        await pool.query('UPDATE users SET works_local=false WHERE telegram_id=$1', [telegramId]);
+        setState(telegramId, { type: 'await_onboarding_question', stage: 'ask_otr' });
+        await bot.sendMessage(chatId, t(lang, 'onboardingOtrUseAsk'), {
+          reply_markup: { inline_keyboard: [[{ text: '✅ Yes', callback_data: 'onb:otr:yes' }, { text: '❌ No', callback_data: 'onb:otr:no' }]] }
+        });
+      }
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (topic === 'otr' && current.stage === 'ask_otr') {
+      if (answer === 'yes') {
+        setState(telegramId, { type: 'await_onboarding_question', stage: 'ask_otr_mode' });
+        await bot.sendMessage(chatId, t(lang, 'onboardingOtrModeAsk'), {
+          reply_markup: { inline_keyboard: [[{ text: t(lang, 'onboardingOtrModeMiles'), callback_data: 'onb:mode:miles' }, { text: t(lang, 'onboardingOtrModePercent'), callback_data: 'onb:mode:percent' }]] }
+        });
+      } else {
+        await pool.query('UPDATE users SET works_otr=false WHERE telegram_id=$1', [telegramId]);
+        clearState(telegramId);
+        await bot.sendMessage(chatId, t(lang, 'onboardingDone'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
+      }
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (topic === 'mode' && current.stage === 'ask_otr_mode') {
+      if (answer === 'miles') {
+        setState(telegramId, { type: 'await_onboarding_rate_otr_miles' });
+        await bot.sendMessage(chatId, t(lang, 'onboardingOtrMileRateAsk'), { reply_markup: getCancelInlineKeyboard() });
+      } else {
+        setState(telegramId, { type: 'await_onboarding_rate_otr_percent' });
+        await bot.sendMessage(chatId, t(lang, 'onboardingOtrPercentAsk'), { reply_markup: getCancelInlineKeyboard() });
+      }
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+  }
+
   if (payload === 'admin:broadcast' && telegramId === ADMIN_ID) {
     setState(telegramId, { type: 'await_broadcast_message' });
     await bot.sendMessage(chatId, t(lang, 'askBroadcast'), { reply_markup: getCancelInlineKeyboard() });
@@ -1084,13 +1178,14 @@ async function handleCallback(bot, query) {
     await bot.sendMessage(chatId, `Користувач ${targetId}: ${approvedValue ? 'підтверджений' : 'заблокований'}`);
     if (approvedValue) {
       const targetLang = await getUserLang(targetId);
-      setState(targetId, { type: 'await_onboarding_rate', stage: 'otr' });
-      await bot.sendMessage(targetId, t(targetLang, 'onboardingOtrAsk'), {
+      await pool.query("UPDATE users SET works_local=false, works_otr=false, otr_mode='miles', otr_percent=0 WHERE telegram_id=$1", [targetId]);
+      setState(targetId, { type: 'await_onboarding_question', stage: 'ask_local' });
+      await bot.sendMessage(targetId, t(targetLang, 'onboardingLocalUseAsk'), {
         reply_markup: {
-          inline_keyboard: [
-            [{ text: menuText(targetLang, 'adminContact'), callback_data: 'settings:contact_admin' }],
-            [{ text: '❌ Скасувати / Cancel', callback_data: 'cancel_input' }]
-          ]
+          inline_keyboard: [[
+            { text: '✅ Yes', callback_data: 'onb:local:yes' },
+            { text: '❌ No', callback_data: 'onb:local:no' }
+          ]]
         }
       }).catch(() => {});
     }

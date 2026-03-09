@@ -9,7 +9,7 @@ export async function fetchUser(telegramId) {
 
 export async function getUserLang(telegramId) {
   const user = await fetchUser(telegramId);
-  return user?.lang === 'en' ? 'en' : 'uk';
+  return 'en';
 }
 
 export async function registerUser(telegramId, name) {
@@ -55,7 +55,7 @@ export async function fetchWorkLogs(telegramId, from, to, selectedTypes = WORK_T
 }
 
 export function summarizeLogs(rows) {
-  const summary = { total: 0, otr: 0, local: 0, boise: 0, boise_custom: 0 };
+  const summary = { total: 0, otr: 0, otr_gross: 0, local: 0, boise: 0, boise_custom: 0 };
   for (const row of rows) {
     summary.total += Number(row.amount || 0);
     if (summary[row.type] !== undefined) summary[row.type] += 1;
@@ -88,7 +88,7 @@ export function normalizeSelectedTypes(selectedMap) {
   const selected = FILTER_WORK_TYPES.filter((type) => selectedMap?.[type]);
   const effective = selected.length ? selected : [...FILTER_WORK_TYPES];
   const expanded = [];
-  if (effective.includes('otr')) expanded.push('otr');
+  if (effective.includes('otr')) expanded.push('otr', 'otr_gross');
   if (effective.includes('local')) expanded.push('local');
   if (effective.includes('boise_custom')) expanded.push('boise', 'boise_custom');
   return expanded;
