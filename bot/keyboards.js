@@ -4,7 +4,7 @@ export function getMainKeyboard(isAdmin, lang = 'uk') {
   const keyboard = [
     [{ text: menuText(lang, 'otr') }, { text: menuText(lang, 'local') }],
     [{ text: menuText(lang, 'custom') }, { text: menuText(lang, 'stats') }],
-    [{ text: menuText(lang, 'settings') }]
+    [{ text: menuText(lang, 'settings') }, { text: menuText(lang, 'donate') }]
   ];
 
   if (isAdmin) {

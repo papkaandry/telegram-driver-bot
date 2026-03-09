@@ -216,7 +216,7 @@ function parseHoursOrNumber(text) {
 
 function isMainActionText(text) {
   const langs = ['uk', 'en'];
-  const keys = ['otr', 'local', 'custom', 'stats', 'settings', 'adminContact', 'update', 'adminMenu'];
+  const keys = ['otr', 'local', 'custom', 'stats', 'settings', 'donate', 'adminContact', 'update', 'adminMenu'];
   const all = langs.flatMap((lng) => keys.map((k) => menuText(lng, k)));
   return all.includes(text);
 }
@@ -576,6 +576,16 @@ async function handleTextInput(bot, msg) {
       }
     });
     await logDriverAction(bot, telegramId, 'Відкрив меню Stats');
+    return;
+  }
+
+
+  if (text === menuText(lang, 'donate')) {
+    await bot.sendMessage(chatId, `❤️ Дякую за підтримку!\nhttps://buymeacoffee.com/telegram_driver_bot`, {
+      reply_markup: {
+        inline_keyboard: [[{ text: '☕ Buy me a coffee', url: 'https://buymeacoffee.com/telegram_driver_bot' }]]
+      }
+    });
     return;
   }
 

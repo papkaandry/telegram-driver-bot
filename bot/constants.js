@@ -18,6 +18,7 @@ export const MAIN_MENU_TEXTS = {
     custom: '💵 Кастом прайс',
     stats: '📊 Stats',
     settings: '⚙️ Налаштування',
+    donate: '❤️ Підтримати розробку',
     adminContact: '💬 Звʼязок з адміном',
     update: '✅ Обнова',
     adminMenu: '🛠 Admin Menu'
@@ -28,6 +29,7 @@ export const MAIN_MENU_TEXTS = {
     custom: '💵 Custom price',
     stats: '📊 Stats',
     settings: '⚙️ Settings',
+    donate: '❤️ Support development',
     adminContact: '💬 Contact admin',
     update: '✅ Update',
     adminMenu: '🛠 Admin Menu'
