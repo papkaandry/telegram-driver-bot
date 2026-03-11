@@ -56,11 +56,18 @@ async function readBody(req) {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
+function routeParam(path, prefix) {
+  if (!path.startsWith(prefix)) return null;
+  return decodeURIComponent(path.slice(prefix.length));
+}
+
 async function logAction(action, details = {}, ok = true) {
   try {
     await pool.query('CREATE TABLE IF NOT EXISTS admin_activity_log (id SERIAL PRIMARY KEY, action TEXT NOT NULL, details JSONB, ok BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMP NOT NULL DEFAULT NOW())');
     await pool.query('INSERT INTO admin_activity_log(action, details, ok) VALUES ($1,$2,$3)', [action, details, ok]);
-  } catch (e) { console.error('[ADMIN] log failed', e.message); }
+  } catch (e) {
+    console.error('[ADMIN] log failed', e.message);
+  }
 }
 
 async function hasColumn(table, column) {
@@ -71,16 +78,29 @@ async function hasColumn(table, column) {
     const ok = rows.length > 0;
     columnCache.set(k, ok);
     return ok;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 async function buildExcel(telegramId, from, to) {
-  const { rows } = await pool.query('SELECT type, value, amount, DATE(created_at) AS date FROM work_logs WHERE telegram_id=$1 AND DATE(created_at) BETWEEN $2 AND $3 ORDER BY created_at', [String(telegramId), from, to]);
+  const { rows } = await pool.query(
+    'SELECT type, value, amount, DATE(created_at) AS date FROM work_logs WHERE telegram_id=$1 AND DATE(created_at) BETWEEN $2 AND $3 ORDER BY created_at',
+    [String(telegramId), from, to]
+  );
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Report');
-  ws.columns = [{ header: 'Date', key: 'date', width: 14 }, { header: 'Type', key: 'type', width: 16 }, { header: 'Value', key: 'value', width: 12 }, { header: 'Amount', key: 'amount', width: 14 }];
+  ws.columns = [
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'Type', key: 'type', width: 16 },
+    { header: 'Value', key: 'value', width: 12 },
+    { header: 'Amount', key: 'amount', width: 14 }
+  ];
   let total = 0;
-  rows.forEach((r) => { total += Number(r.amount || 0); ws.addRow(r); });
+  rows.forEach((r) => {
+    total += Number(r.amount || 0);
+    ws.addRow(r);
+  });
   ws.addRow({});
   ws.addRow({ type: 'TOTAL', amount: total.toFixed(2) });
   return { buffer: Buffer.from(await wb.xlsx.writeBuffer()), count: rows.length };
@@ -131,6 +151,13 @@ export async function createAdminHandler(bot) {
         return secure(async ({ data }) => json(res, 200, { ok: true, session: data }));
       }
 
+      if (path === '/admin/api/drivers/options' && req.method === 'GET') {
+        return secure(async () => {
+          const { rows } = await pool.query(`SELECT telegram_id, COALESCE(name,'Driver') AS name FROM users ORDER BY name NULLS LAST, telegram_id`);
+          return json(res, 200, { items: rows });
+        });
+      }
+
       if (path === '/admin/api/dashboard' && req.method === 'GET') {
         return secure(async () => {
           try {
@@ -142,9 +169,22 @@ export async function createAdminHandler(bot) {
               pool.query('SELECT COUNT(*)::int AS c FROM users WHERE approved=false')
             ]);
             const debt = await pool.query("SELECT COALESCE(SUM(amount),0)-COALESCE((SELECT SUM(paid_amount) FROM payment_periods),0) AS debt FROM work_logs");
-            const latest = await pool.query('SELECT telegram_id, paid_amount, period_from, period_to, created_at FROM payment_periods ORDER BY created_at DESC LIMIT 10');
-            const attention = await pool.query('SELECT telegram_id, name, created_at FROM users ORDER BY created_at ASC LIMIT 10');
-            return json(res, 200, { cards: { totalDrivers: drivers.rows[0].c, activeToday: activeToday.rows[0].c, reportsToday: reportsToday.rows[0].c, reportsWeek: reportsWeek.rows[0].c, unpaidDebt: Number(debt.rows[0].debt || 0), pendingApprovals: pending.rows[0].c, citiesCovered: 0, documentsToday: 0 }, latestPayments: latest.rows, attention: attention.rows });
+            const latest = await pool.query('SELECT p.telegram_id, COALESCE(u.name, p.telegram_id) AS name, p.paid_amount, p.period_from, p.period_to, p.created_at FROM payment_periods p LEFT JOIN users u ON u.telegram_id=p.telegram_id ORDER BY p.created_at DESC LIMIT 10');
+            const attention = await pool.query("SELECT u.telegram_id, COALESCE(u.name,'Driver') AS name, COALESCE(MAX(w.created_at), u.created_at) AS last_activity FROM users u LEFT JOIN work_logs w ON w.telegram_id=u.telegram_id GROUP BY u.telegram_id, u.name, u.created_at ORDER BY last_activity ASC LIMIT 10");
+            return json(res, 200, {
+              cards: {
+                totalDrivers: drivers.rows[0].c,
+                activeToday: activeToday.rows[0].c,
+                reportsToday: reportsToday.rows[0].c,
+                reportsWeek: reportsWeek.rows[0].c,
+                unpaidDebt: Number(debt.rows[0].debt || 0),
+                pendingApprovals: pending.rows[0].c,
+                citiesCovered: 0,
+                documentsToday: 0
+              },
+              latestPayments: latest.rows,
+              attention: attention.rows
+            });
           } catch (e) {
             return json(res, 200, { cards: {}, latestPayments: [], attention: [], warning: e.message });
           }
@@ -154,8 +194,67 @@ export async function createAdminHandler(bot) {
       if (path === '/admin/api/drivers' && req.method === 'GET') {
         return secure(async () => {
           const q = String(url.searchParams.get('q') || '');
-          const { rows } = await pool.query("SELECT u.telegram_id,u.name,u.approved,COALESCE(n.note,'') AS admin_note FROM users u LEFT JOIN admin_driver_notes n ON n.telegram_id=u.telegram_id WHERE ($1='' OR u.name ILIKE '%'||$1||'%' OR u.telegram_id ILIKE '%'||$1||'%') ORDER BY u.created_at DESC LIMIT 300", [q]);
+          const { rows } = await pool.query(
+            `SELECT u.telegram_id,u.name,u.role,u.approved,
+              COALESCE(u.email,'') AS email,
+              COALESCE(n.note,'') AS admin_note
+             FROM users u
+             LEFT JOIN admin_driver_notes n ON n.telegram_id=u.telegram_id
+             WHERE ($1='' OR u.name ILIKE '%'||$1||'%' OR u.telegram_id ILIKE '%'||$1||'%')
+             ORDER BY u.created_at DESC LIMIT 300`,
+            [q]
+          );
           return json(res, 200, { items: rows });
+        });
+      }
+
+      if (path === '/admin/api/drivers' && req.method === 'POST') {
+        return secure(async () => {
+          const body = await readBody(req);
+          const telegramId = String(body.telegram_id || '').trim();
+          if (!telegramId) return json(res, 400, { error: 'telegram_id required' });
+          await pool.query(
+            `INSERT INTO users (telegram_id, name, approved)
+             VALUES ($1,$2,$3)
+             ON CONFLICT (telegram_id) DO UPDATE SET name=EXCLUDED.name, approved=EXCLUDED.approved`,
+            [telegramId, body.name || 'Driver', body.approved === true]
+          );
+          if (body.admin_note !== undefined) {
+            await pool.query(
+              `INSERT INTO admin_driver_notes(telegram_id,note,updated_at)
+               VALUES($1,$2,NOW())
+               ON CONFLICT(telegram_id) DO UPDATE SET note=EXCLUDED.note, updated_at=NOW()`,
+              [telegramId, String(body.admin_note || '')]
+            );
+          }
+          await logAction('driver_create', { telegramId });
+          return json(res, 200, { ok: true });
+        });
+      }
+
+      const driverId = routeParam(path, '/admin/api/drivers/');
+      if (driverId && req.method === 'PATCH') {
+        return secure(async () => {
+          const body = await readBody(req);
+          await pool.query('UPDATE users SET name=COALESCE($2,name), approved=COALESCE($3,approved), role=COALESCE($4,role) WHERE telegram_id=$1', [driverId, body.name ?? null, body.approved ?? null, body.role ?? null]);
+          if (body.admin_note !== undefined) {
+            await pool.query(
+              `INSERT INTO admin_driver_notes(telegram_id,note,updated_at)
+               VALUES($1,$2,NOW())
+               ON CONFLICT(telegram_id) DO UPDATE SET note=EXCLUDED.note, updated_at=NOW()`,
+              [driverId, String(body.admin_note || '')]
+            );
+          }
+          await logAction('driver_update', { driverId, body });
+          return json(res, 200, { ok: true });
+        });
+      }
+
+      if (driverId && req.method === 'DELETE') {
+        return secure(async () => {
+          await pool.query('DELETE FROM users WHERE telegram_id=$1', [driverId]);
+          await logAction('driver_delete', { driverId });
+          return json(res, 200, { ok: true });
         });
       }
 
@@ -165,9 +264,69 @@ export async function createAdminHandler(bot) {
           const to = url.searchParams.get('to') || '';
           const type = url.searchParams.get('type') || '';
           const user = url.searchParams.get('user') || '';
-          const statusField = await hasColumn('work_logs', 'status') ? 'w.status' : "'approved'::text AS status";
-          const { rows } = await pool.query(`SELECT w.id,w.telegram_id,u.name,w.type,w.value,w.amount,${statusField},w.created_at FROM work_logs w LEFT JOIN users u ON u.telegram_id=w.telegram_id WHERE ($1='' OR DATE(w.created_at)>=$1::date) AND ($2='' OR DATE(w.created_at)<=$2::date) AND ($3='' OR w.type=$3) AND ($4='' OR w.telegram_id=$4) ORDER BY w.created_at DESC LIMIT 500`, [from, to, type, user]);
+          const status = url.searchParams.get('status') || '';
+          const hasStatus = await hasColumn('work_logs', 'status');
+          const statusField = hasStatus ? 'w.status' : "'approved'::text AS status";
+          const statusWhere = hasStatus ? 'AND ($5=\'\' OR w.status=$5)' : '';
+          const { rows } = await pool.query(
+            `SELECT w.id,w.telegram_id,COALESCE(u.name,'Driver') AS name,w.type,w.value,w.amount,${statusField},w.created_at
+             FROM work_logs w
+             LEFT JOIN users u ON u.telegram_id=w.telegram_id
+             WHERE ($1='' OR DATE(w.created_at)>=$1::date)
+               AND ($2='' OR DATE(w.created_at)<=$2::date)
+               AND ($3='' OR w.type=$3)
+               AND ($4='' OR w.telegram_id=$4)
+               ${statusWhere}
+             ORDER BY w.created_at DESC LIMIT 500`,
+            [from, to, type, user, status]
+          );
           return json(res, 200, { items: rows });
+        });
+      }
+
+      if (path === '/admin/api/reports' && req.method === 'POST') {
+        return secure(async () => {
+          const body = await readBody(req);
+          const hasStatus = await hasColumn('work_logs', 'status');
+          if (hasStatus) {
+            await pool.query('INSERT INTO work_logs (telegram_id,type,value,amount,status) VALUES ($1,$2,$3,$4,$5)', [String(body.telegram_id), body.type || 'local', Number(body.value || 0), Number(body.amount || 0), body.status || 'new']);
+          } else {
+            await pool.query('INSERT INTO work_logs (telegram_id,type,value,amount) VALUES ($1,$2,$3,$4)', [String(body.telegram_id), body.type || 'local', Number(body.value || 0), Number(body.amount || 0)]);
+          }
+          await logAction('report_create', body);
+          return json(res, 200, { ok: true });
+        });
+      }
+
+      const reportId = routeParam(path, '/admin/api/reports/');
+      if (reportId && req.method === 'PATCH') {
+        return secure(async () => {
+          const body = await readBody(req);
+          if (body.amount !== undefined) await pool.query('UPDATE work_logs SET amount=$2 WHERE id=$1', [Number(reportId), Number(body.amount)]);
+          if (body.value !== undefined) await pool.query('UPDATE work_logs SET value=$2 WHERE id=$1', [Number(reportId), Number(body.value)]);
+          if (body.type !== undefined) await pool.query('UPDATE work_logs SET type=$2 WHERE id=$1', [Number(reportId), String(body.type)]);
+          if (body.status !== undefined && await hasColumn('work_logs', 'status')) {
+            await pool.query('UPDATE work_logs SET status=$2 WHERE id=$1', [Number(reportId), String(body.status)]);
+          }
+          await logAction('report_update', { reportId, body });
+          return json(res, 200, { ok: true });
+        });
+      }
+
+      if (reportId && req.method === 'DELETE') {
+        return secure(async () => {
+          await pool.query('DELETE FROM work_logs WHERE id=$1', [Number(reportId)]);
+          await logAction('report_delete', { reportId });
+          return json(res, 200, { ok: true });
+        });
+      }
+
+      if (path === '/admin/api/reports/send-back' && req.method === 'POST') {
+        return secure(async () => {
+          const body = await readBody(req);
+          await bot.sendMessage(String(body.telegramId), `❗ Report returned for fix\n${body.text || ''}`);
+          await logAction('report_send_back', body);
+          return json(res, 200, { ok: true });
         });
       }
 
@@ -197,9 +356,18 @@ export async function createAdminHandler(bot) {
 
       if (path === '/admin/api/payments' && req.method === 'GET') {
         return secure(async () => {
-          const history = await pool.query('SELECT telegram_id, period_from, period_to, paid_amount, created_at FROM payment_periods ORDER BY created_at DESC LIMIT 300');
-          const debt = await pool.query("SELECT u.telegram_id,u.name,COALESCE((SELECT SUM(amount) FROM work_logs w WHERE w.telegram_id=u.telegram_id),0)-COALESCE((SELECT SUM(paid_amount) FROM payment_periods p WHERE p.telegram_id=u.telegram_id),0)+COALESCE((SELECT SUM(amount) FROM admin_manual_adjustments a WHERE a.telegram_id=u.telegram_id),0) AS debt FROM users u ORDER BY debt DESC LIMIT 200");
+          const history = await pool.query('SELECT p.telegram_id, COALESCE(u.name,p.telegram_id) AS name, p.period_from, p.period_to, p.paid_amount, p.created_at FROM payment_periods p LEFT JOIN users u ON u.telegram_id=p.telegram_id ORDER BY p.created_at DESC LIMIT 300');
+          const debt = await pool.query("SELECT u.telegram_id,COALESCE(u.name,'Driver') AS name,COALESCE((SELECT SUM(amount) FROM work_logs w WHERE w.telegram_id=u.telegram_id),0)-COALESCE((SELECT SUM(paid_amount) FROM payment_periods p WHERE p.telegram_id=u.telegram_id),0)+COALESCE((SELECT SUM(amount) FROM admin_manual_adjustments a WHERE a.telegram_id=u.telegram_id),0) AS debt FROM users u ORDER BY debt DESC LIMIT 200");
           return json(res, 200, { history: history.rows, debt: debt.rows, currency: 'USD' });
+        });
+      }
+
+      if (path === '/admin/api/payments/adjustment' && req.method === 'POST') {
+        return secure(async () => {
+          const body = await readBody(req);
+          await pool.query('INSERT INTO admin_manual_adjustments (telegram_id, amount, reason) VALUES ($1,$2,$3)', [String(body.telegram_id), Number(body.amount || 0), String(body.reason || '')]);
+          await logAction('payment_adjustment', body);
+          return json(res, 200, { ok: true });
         });
       }
 
@@ -230,6 +398,7 @@ export async function createAdminHandler(bot) {
               stat.failed += 1;
             }
           }
+          await logAction('broadcast', { ...body, ...stat });
           return json(res, 200, stat);
         });
       }
