@@ -663,9 +663,14 @@ async function handleTextInput(bot, msg) {
 
   if (text === menuText(lang, 'adminMenu') && telegramId === ADMIN_ID) {
     clearState(telegramId);
+    const adminPanelUrl = process.env.ADMIN_WEBAPP_URL || process.env.WEB_APP_URL || '';
+    const adminPanelButton = adminPanelUrl
+      ? [{ text: 'Админ панель', url: adminPanelUrl }]
+      : [{ text: 'Админ панель', callback_data: 'admin:webapp:missing' }];
     await bot.sendMessage(chatId, t(lang, 'adminMenu'), {
       reply_markup: {
         inline_keyboard: [
+          adminPanelButton,
           [{ text: '👥 Drivers', callback_data: 'admin:drivers' }],
           [{ text: '📁 Excel for period (to chat and group)', callback_data: 'admin:period_excel' }],
           [{ text: '🗄 DB overview', callback_data: 'admin:db:overview' }, { text: '🕘 Last work logs', callback_data: 'admin:db:last' }],
@@ -740,6 +745,12 @@ async function handleCallback(bot, query) {
     clearState(telegramId);
     await bot.answerCallbackQuery(query.id, { text: t(lang, 'canceled') });
     await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
+    return;
+  }
+
+  if (payload === 'admin:webapp:missing') {
+    await bot.answerCallbackQuery(query.id, { text: 'ADMIN_WEBAPP_URL is not configured' });
+    await bot.sendMessage(chatId, '⚠️ Админ-панель не настроена. Укажите `ADMIN_WEBAPP_URL=https://<your-domain>/admin` в переменных окружения и перезапустите бота.');
     return;
   }
 

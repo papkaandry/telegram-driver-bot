@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import TelegramBot from 'node-telegram-bot-api';
 import { initDB } from './db.js';
 import { setupBot, sendWeeklyReports } from './bot.js';
+import { startAdminServer } from './admin/server.js';
 
 const isTrue = (value) => String(value).toLowerCase() === 'true';
 
@@ -37,6 +38,7 @@ process.on('uncaughtException', (error) => {
 try {
   await initDB();
   setupBot(bot);
+  await startAdminServer(bot);
   console.log('[BOOT] Bot started');
 
   if (SEND_STARTUP_TEST_MESSAGE && GROUP_CHAT_ID) {
