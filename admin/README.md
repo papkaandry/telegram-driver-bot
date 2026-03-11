@@ -2,7 +2,7 @@
 
 ## Запуск
 - Панель стартує автоматично разом із ботом через `index.js`.
-- URL: `/admin` на `ADMIN_PORT` (за замовчуванням `3001`).
+- URL: `/admin` на тому ж сервері/порті, що і бот (`process.env.PORT`, Railway public port).
 
 ## Обов'язкові ENV
 - `ADMIN_TELEGRAM_ID` (або `ADMIN_ID`)
