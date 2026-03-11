@@ -8,7 +8,7 @@
 - `ADMIN_TELEGRAM_ID` (або `ADMIN_ID`)
 - `ADMIN_LOGIN`
 - `ADMIN_PASSWORD`
-- `ADMIN_WEBAPP_URL` (для кнопки **Админ панель** у Telegram)
+- `ADMIN_WEBAPP_URL` (для кнопки **Админ панель** у Telegram, обязательно публичный `https://.../admin`)
 
 ## Аутентифікація
 - В Telegram WebApp: перевіряється Telegram ID.
