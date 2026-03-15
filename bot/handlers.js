@@ -25,6 +25,7 @@ import {
   clearUserWorkData
 } from './data.js';
 import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, sendPeriodExcelAllDrivers, nextPaymentFrom } from './reports.js';
+import { generateBolPdfFiles } from './bol.js';
 
 const supportSessions = new Map();
 
@@ -480,6 +481,31 @@ async function handleStateInput(bot, msg, lang) {
     return true;
   }
 
+  if (currentState.type === 'await_bol_trailer_numbers' && telegramId === ADMIN_ID) {
+    const trailers = String(text)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^[0-9]+$/.test(line));
+
+    if (!trailers.length) {
+      await bot.sendMessage(chatId, 'No valid numbers found. Send one or multiple trailer numbers (one per line).');
+      return true;
+    }
+
+    try {
+      const files = await generateBolPdfFiles(trailers);
+      for (const file of files) {
+        await bot.sendDocument(chatId, file.filePath, {}, { filename: file.fileName });
+      }
+    } catch (error) {
+      console.error('[BOL] generation failed:', error);
+      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check template and try again.');
+    }
+
+    clearState(telegramId);
+    return true;
+  }
+
   if (currentState.type === 'await_set_rates' && telegramId === ADMIN_ID) {
     const [otr, local] = text.split(/\s+/).map((x) => Number(x.replace(',', '.')));
     if (![otr, local].every((n) => Number.isFinite(n) && n >= 0)) {
@@ -675,7 +701,8 @@ async function handleTextInput(bot, msg) {
           [{ text: '📁 Excel for period (to chat and group)', callback_data: 'admin:period_excel' }],
           [{ text: '🗄 DB overview', callback_data: 'admin:db:overview' }, { text: '🕘 Last work logs', callback_data: 'admin:db:last' }],
           [{ text: '👤 Driver DB info', callback_data: 'admin:db:pick_driver' }],
-          [{ text: '📣 Send broadcast', callback_data: 'admin:broadcast' }]
+          [{ text: '📣 Send broadcast', callback_data: 'admin:broadcast' }],
+          [{ text: 'Create BOL', callback_data: 'admin:create_bol' }]
         ]
       }
     });
@@ -1330,6 +1357,13 @@ OTR mode: ${user.otr_mode}
   if (payload === 'admin:broadcast' && telegramId === ADMIN_ID) {
     setState(telegramId, { type: 'await_broadcast_message' });
     await bot.sendMessage(chatId, t(lang, 'askBroadcast'), { reply_markup: getCancelInlineKeyboard() });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'admin:create_bol' && telegramId === ADMIN_ID) {
+    setState(telegramId, { type: 'await_bol_trailer_numbers' });
+    await bot.sendMessage(chatId, 'Send trailer number or multiple trailer numbers (one per line)');
     await bot.answerCallbackQuery(query.id);
     return;
   }
