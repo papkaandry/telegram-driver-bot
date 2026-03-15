@@ -502,7 +502,7 @@ async function handleStateInput(bot, msg, lang) {
       }
     } catch (error) {
       console.error('[BOL] generation failed:', error);
-      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check that BOL_template.pdf contains {{TRA}} (or 563343) markers and try again.');
+      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check that BOL_template.pdf contains {{TRA}} markers and try again.');
     }
 
     clearState(telegramId);

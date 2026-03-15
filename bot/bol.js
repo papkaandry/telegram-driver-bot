@@ -1,175 +1,65 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import zlib from 'zlib';
 
 const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.pdf');
-const PLACEHOLDERS = ['{{TRA}}', '563343'];
+const PLACEHOLDER = '{{TRA}}';
 
 function sanitizeTrailer(value) {
   return String(value || '').trim();
 }
 
-function replaceInLatin1TextByPlaceholder(text, placeholder, replacementAscii) {
+function replaceAllAscii(buffer, needle, replacement) {
+  const src = Buffer.from(buffer);
+  const find = Buffer.from(needle, 'ascii');
+  const out = Buffer.from(replacement, 'ascii');
   let count = 0;
-  const out = [];
   let pos = 0;
 
-  while (pos < text.length) {
-    const idx = text.indexOf(placeholder, pos);
-    if (idx === -1) {
-      out.push(text.slice(pos));
-      break;
-    }
-
-    out.push(text.slice(pos, idx));
-
-    let slotLen = placeholder.length;
-    const slotMax = 15;
-    while (slotLen < slotMax && idx + slotLen < text.length) {
-      const ch = text[idx + slotLen];
-      if (ch !== ' ' && ch !== '\u0000') break;
-      slotLen += 1;
-    }
-
-    const normalized = replacementAscii.length > slotLen
-      ? replacementAscii.slice(0, slotLen)
-      : replacementAscii.padEnd(slotLen, ' ');
-    out.push(normalized);
-
+  while (pos <= src.length - find.length) {
+    const idx = src.indexOf(find, pos);
+    if (idx === -1) break;
+    const slotLen = find.length;
+    const normalized = out.length >= slotLen
+      ? out.subarray(0, slotLen)
+      : Buffer.concat([out, Buffer.from(' '.repeat(slotLen - out.length), 'ascii')]);
+    normalized.copy(src, idx);
     count += 1;
     pos = idx + slotLen;
   }
 
-  return { text: out.join(''), count };
+  return { buffer: src, count };
 }
 
-function replaceInLatin1Text(text, replacementAscii) {
-  let total = 0;
-  let current = text;
-  for (const placeholder of PLACEHOLDERS) {
-    const r = replaceInLatin1TextByPlaceholder(current, placeholder, replacementAscii);
-    current = r.text;
-    total += r.count;
+function toUtf16BeBytes(text) {
+  const le = Buffer.from(text, 'utf16le');
+  const be = Buffer.alloc(le.length);
+  for (let i = 0; i < le.length; i += 2) {
+    be[i] = le[i + 1];
+    be[i + 1] = le[i];
   }
-  return { text: current, count: total };
+  return be;
 }
 
-function replaceAllBufferOccurrencesByPlaceholder(buffer, needleAscii, replacementAscii) {
-  const needle = Buffer.from(needleAscii, 'ascii');
-  const output = Buffer.from(buffer);
+function replaceAllUtf16Be(buffer, needle, replacement) {
+  const src = Buffer.from(buffer);
+  const find = toUtf16BeBytes(needle);
+  const out = toUtf16BeBytes(replacement);
   let count = 0;
   let pos = 0;
 
-  while (pos <= output.length - needle.length) {
-    const found = output.indexOf(needle, pos);
-    if (found === -1) break;
-
-    let slotLen = needle.length;
-    const slotMax = 15;
-    while (slotLen < slotMax && found + slotLen < output.length) {
-      const nextByte = output[found + slotLen];
-      if (nextByte !== 0x20 && nextByte !== 0x00) break;
-      slotLen += 1;
-    }
-
-    const normalized = replacementAscii.length > slotLen
-      ? replacementAscii.slice(0, slotLen)
-      : replacementAscii.padEnd(slotLen, ' ');
-
-    const replacement = Buffer.from(normalized, 'ascii');
-    replacement.copy(output, found);
+  while (pos <= src.length - find.length) {
+    const idx = src.indexOf(find, pos);
+    if (idx === -1) break;
+    const slotLen = find.length;
+    const normalized = out.length >= slotLen
+      ? out.subarray(0, slotLen)
+      : Buffer.concat([out, Buffer.alloc(slotLen - out.length, 0x00)]);
+    normalized.copy(src, idx);
     count += 1;
-    pos = found + slotLen;
+    pos = idx + slotLen;
   }
 
-  return { buffer: output, count };
-}
-
-function replaceAllBufferOccurrences(buffer, replacementAscii) {
-  let total = 0;
-  let current = Buffer.from(buffer);
-  for (const placeholder of PLACEHOLDERS) {
-    const r = replaceAllBufferOccurrencesByPlaceholder(current, placeholder, replacementAscii);
-    current = r.buffer;
-    total += r.count;
-  }
-  return { buffer: current, count: total };
-}
-
-function findStreams(buffer) {
-  const streams = [];
-  const streamToken = Buffer.from('stream');
-  const endToken = Buffer.from('endstream');
-  let from = 0;
-
-  while (from < buffer.length) {
-    const streamIdx = buffer.indexOf(streamToken, from);
-    if (streamIdx === -1) break;
-
-    let dataStart = streamIdx + streamToken.length;
-    if (buffer[dataStart] === 0x0d && buffer[dataStart + 1] === 0x0a) dataStart += 2;
-    else if (buffer[dataStart] === 0x0a) dataStart += 1;
-
-    const endIdx = buffer.indexOf(endToken, dataStart);
-    if (endIdx === -1) break;
-
-    let dataEnd = endIdx;
-    if (buffer[dataEnd - 1] === 0x0a) dataEnd -= 1;
-    if (buffer[dataEnd - 1] === 0x0d) dataEnd -= 1;
-
-    if (dataEnd > dataStart) streams.push({ start: dataStart, end: dataEnd });
-    from = endIdx + endToken.length;
-  }
-
-  return streams;
-}
-
-function replaceInCompressedStreams(buffer, replacementAscii) {
-  const output = Buffer.from(buffer);
-  const streams = findStreams(output);
-  let replacedTotal = 0;
-
-  for (const s of streams) {
-    const raw = output.subarray(s.start, s.end);
-    let inflated;
-    try {
-      inflated = zlib.inflateSync(raw);
-    } catch {
-      continue;
-    }
-
-    const inflatedText = inflated.toString('latin1');
-    if (!PLACEHOLDERS.some((p) => inflatedText.includes(p))) continue;
-
-    const { text: replacedText, count } = replaceInLatin1Text(inflatedText, replacementAscii);
-    if (!count) continue;
-
-    const replacedInflated = Buffer.from(replacedText, 'latin1');
-
-    let recompressed = null;
-    const strategies = [
-      zlib.constants.Z_DEFAULT_STRATEGY,
-      zlib.constants.Z_FILTERED,
-      zlib.constants.Z_HUFFMAN_ONLY,
-      zlib.constants.Z_RLE
-    ];
-    for (const level of [9, 8, 7, 6, 5, 4, 3, 2, 1]) {
-      for (const strategy of strategies) {
-        const candidate = zlib.deflateSync(replacedInflated, { level, strategy });
-        if (!recompressed || candidate.length < recompressed.length) recompressed = candidate;
-      }
-    }
-
-    if (!recompressed || recompressed.length > raw.length) {
-      continue;
-    }
-
-    recompressed.copy(output, s.start);
-    output.fill(0x20, s.start + recompressed.length, s.end);
-    replacedTotal += count;
-  }
-
-  return { buffer: output, count: replacedTotal };
+  return { buffer: src, count };
 }
 
 export async function generateBolPdfFiles(trailerNumbers = []) {
@@ -190,32 +80,24 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
       throw new Error('Trailer value must be 1..15 characters without spaces.');
     }
 
-    let resultBuffer = Buffer.from(templateBuffer);
-    let replaced = 0;
-
-    const direct = replaceAllBufferOccurrences(resultBuffer, trailer);
-    resultBuffer = direct.buffer;
-    replaced += direct.count;
+    const asciiAttempt = replaceAllAscii(templateBuffer, PLACEHOLDER, trailer);
+    let resultBuffer = asciiAttempt.buffer;
+    let replaced = asciiAttempt.count;
 
     if (replaced === 0) {
-      const compressed = replaceInCompressedStreams(resultBuffer, trailer);
-      resultBuffer = compressed.buffer;
-      replaced += compressed.count;
+      const utf16Attempt = replaceAllUtf16Be(templateBuffer, PLACEHOLDER, trailer);
+      resultBuffer = utf16Attempt.buffer;
+      replaced = utf16Attempt.count;
     }
 
     if (replaced === 0) {
-      const asLatin1 = resultBuffer.toString('latin1');
-      const fallback = replaceInLatin1Text(asLatin1, trailer);
-      if (fallback.count > 0) {
-        resultBuffer = Buffer.from(fallback.text, 'latin1');
-        replaced += fallback.count;
-      }
+      throw new Error(`Could not find placeholder ${PLACEHOLDER} in BOL_template.pdf`);
     }
 
     const fileName = `BOL_${trailer}.pdf`;
     const filePath = path.join('/tmp', fileName);
     await fs.writeFile(filePath, resultBuffer);
-    out.push({ trailer, filePath, fileName, replaced: replaced > 0 });
+    out.push({ trailer, filePath, fileName });
   }
 
   return out;
