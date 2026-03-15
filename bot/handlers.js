@@ -485,10 +485,10 @@ async function handleStateInput(bot, msg, lang) {
     const trailers = String(text)
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^[A-Za-z0-9_!\-=]{1,15}$/.test(line));
+      .filter((line) => /^[^\s]{1,15}$/u.test(line));
 
     if (!trailers.length) {
-      await bot.sendMessage(chatId, 'No valid values found. Send 1..15 chars per line (letters/numbers and _ ! - = are allowed).');
+      await bot.sendMessage(chatId, 'No valid values found. Send 1..15 chars per line (spaces are not allowed).');
       return true;
     }
 
@@ -496,6 +496,9 @@ async function handleStateInput(bot, msg, lang) {
       const files = await generateBolPdfFiles(trailers);
       for (const file of files) {
         await bot.sendDocument(chatId, file.filePath, {}, { filename: file.fileName });
+      }
+      if (files.some((f) => !f.replaced)) {
+        await bot.sendMessage(chatId, '⚠️ Placeholder 563343 was not found in template for one or more files. Template copy was sent without replacement.');
       }
     } catch (error) {
       console.error('[BOL] generation failed:', error);

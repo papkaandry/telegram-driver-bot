@@ -28,11 +28,11 @@ function replaceAllBufferOccurrences(buffer, needleAscii, replacementAscii) {
       slotLen += 1;
     }
 
-    if (replacementAscii.length > slotLen) {
-      throw new Error(`Trailer value is too long for template slot (max ${slotLen} at this position).`);
-    }
+    const normalized = replacementAscii.length > slotLen
+      ? replacementAscii.slice(0, slotLen)
+      : replacementAscii.padEnd(slotLen, ' ');
 
-    const replacement = Buffer.from(replacementAscii.padEnd(slotLen, ' '), 'ascii');
+    const replacement = Buffer.from(normalized, 'ascii');
     replacement.copy(output, found);
     count += 1;
     pos = found + slotLen;
@@ -55,19 +55,18 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
   const out = [];
 
   for (const trailer of input) {
-    if (!/^[A-Za-z0-9_!\-=]{1,15}$/.test(trailer)) {
-      throw new Error('Trailer value must be 1..15 chars and may contain letters, numbers, _, !, -, =');
+    if (!/^[^\s]{1,15}$/u.test(trailer)) {
+      throw new Error('Trailer value must be 1..15 characters without spaces.');
     }
 
+    let resultBuffer = templateBuffer;
     const { buffer, count } = replaceAllBufferOccurrences(templateBuffer, TRAILER_PLACEHOLDER, trailer);
-    if (count < 1) {
-      throw new Error(`Could not find "${TRAILER_PLACEHOLDER}" placeholders in BOL_template.pdf`);
-    }
+    if (count >= 1) resultBuffer = buffer;
 
     const fileName = `BOL_${trailer}.pdf`;
     const filePath = path.join('/tmp', fileName);
-    await fs.writeFile(filePath, buffer);
-    out.push({ trailer, filePath, fileName });
+    await fs.writeFile(filePath, resultBuffer);
+    out.push({ trailer, filePath, fileName, replaced: count >= 1 });
   }
 
   return out;
