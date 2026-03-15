@@ -25,6 +25,7 @@ import {
   clearUserWorkData
 } from './data.js';
 import { sendExcelToChat, sendStatsSummary, sendTodayExcelToGroup, sendPeriodExcelAllDrivers, nextPaymentFrom } from './reports.js';
+import { generateBolPdfFiles } from './bol.js';
 
 const supportSessions = new Map();
 
@@ -480,6 +481,34 @@ async function handleStateInput(bot, msg, lang) {
     return true;
   }
 
+  if (currentState.type === 'await_bol_trailer_numbers' && telegramId === ADMIN_ID) {
+    const trailers = String(text)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^[^\s]{1,15}$/u.test(line));
+
+    if (!trailers.length) {
+      await bot.sendMessage(chatId, 'No valid values found. Send 1..15 chars per line (spaces are not allowed).');
+      return true;
+    }
+
+    try {
+      const files = await generateBolPdfFiles(trailers);
+      for (const file of files) {
+        await bot.sendDocument(chatId, file.filePath, {}, { filename: file.fileName });
+      }
+      if (files.some((f) => !f.replaced)) {
+        await bot.sendMessage(chatId, '⚠️ Placeholder 563343 was not found in template for one or more files. Template copy was sent without replacement.');
+      }
+    } catch (error) {
+      console.error('[BOL] generation failed:', error);
+      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check template and try again.');
+    }
+
+    clearState(telegramId);
+    return true;
+  }
+
   if (currentState.type === 'await_set_rates' && telegramId === ADMIN_ID) {
     const [otr, local] = text.split(/\s+/).map((x) => Number(x.replace(',', '.')));
     if (![otr, local].every((n) => Number.isFinite(n) && n >= 0)) {
@@ -663,14 +692,20 @@ async function handleTextInput(bot, msg) {
 
   if (text === menuText(lang, 'adminMenu') && telegramId === ADMIN_ID) {
     clearState(telegramId);
+    const adminPanelUrl = process.env.ADMIN_WEBAPP_URL || process.env.WEB_APP_URL || '';
+    const adminPanelButton = adminPanelUrl
+      ? [{ text: 'Админ панель', url: adminPanelUrl }]
+      : [{ text: 'Админ панель', callback_data: 'admin:webapp:missing' }];
     await bot.sendMessage(chatId, t(lang, 'adminMenu'), {
       reply_markup: {
         inline_keyboard: [
+          adminPanelButton,
           [{ text: '👥 Drivers', callback_data: 'admin:drivers' }],
           [{ text: '📁 Excel for period (to chat and group)', callback_data: 'admin:period_excel' }],
           [{ text: '🗄 DB overview', callback_data: 'admin:db:overview' }, { text: '🕘 Last work logs', callback_data: 'admin:db:last' }],
           [{ text: '👤 Driver DB info', callback_data: 'admin:db:pick_driver' }],
-          [{ text: '📣 Send broadcast', callback_data: 'admin:broadcast' }]
+          [{ text: '📣 Send broadcast', callback_data: 'admin:broadcast' }],
+          [{ text: 'Create BOL', callback_data: 'admin:create_bol' }]
         ]
       }
     });
@@ -740,6 +775,12 @@ async function handleCallback(bot, query) {
     clearState(telegramId);
     await bot.answerCallbackQuery(query.id, { text: t(lang, 'canceled') });
     await bot.sendMessage(chatId, t(lang, 'canceled'), { reply_markup: getMainKeyboard(telegramId === ADMIN_ID, lang) });
+    return;
+  }
+
+  if (payload === 'admin:webapp:missing') {
+    await bot.answerCallbackQuery(query.id, { text: 'ADMIN_WEBAPP_URL is not configured' });
+    await bot.sendMessage(chatId, '⚠️ Админ-панель не настроена. Укажите `ADMIN_WEBAPP_URL=https://<your-domain>/admin` в переменных окружения и перезапустите бота.');
     return;
   }
 
@@ -1319,6 +1360,13 @@ OTR mode: ${user.otr_mode}
   if (payload === 'admin:broadcast' && telegramId === ADMIN_ID) {
     setState(telegramId, { type: 'await_broadcast_message' });
     await bot.sendMessage(chatId, t(lang, 'askBroadcast'), { reply_markup: getCancelInlineKeyboard() });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (payload === 'admin:create_bol' && telegramId === ADMIN_ID) {
+    setState(telegramId, { type: 'await_bol_trailer_numbers' });
+    await bot.sendMessage(chatId, 'Send trailer number or multiple trailer numbers (one per line)');
     await bot.answerCallbackQuery(query.id);
     return;
   }
