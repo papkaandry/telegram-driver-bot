@@ -1,65 +1,55 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { tmpdir } from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import JSZip from 'jszip';
 
-const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.pdf');
+const execFileAsync = promisify(execFile);
+const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.docx');
 const PLACEHOLDER = '{{TRA}}';
 
 function sanitizeTrailer(value) {
   return String(value || '').trim();
 }
 
-function replaceAllAscii(buffer, needle, replacement) {
-  const src = Buffer.from(buffer);
-  const find = Buffer.from(needle, 'ascii');
-  const out = Buffer.from(replacement, 'ascii');
-  let count = 0;
-  let pos = 0;
-
-  while (pos <= src.length - find.length) {
-    const idx = src.indexOf(find, pos);
-    if (idx === -1) break;
-    const slotLen = find.length;
-    const normalized = out.length >= slotLen
-      ? out.subarray(0, slotLen)
-      : Buffer.concat([out, Buffer.from(' '.repeat(slotLen - out.length), 'ascii')]);
-    normalized.copy(src, idx);
-    count += 1;
-    pos = idx + slotLen;
+async function convertDocxToPdf(inputDocxPath, outputDir) {
+  const binary = process.platform === 'win32' ? 'soffice.exe' : 'soffice';
+  try {
+    await execFileAsync(binary, ['--headless', '--convert-to', 'pdf', '--outdir', outputDir, inputDocxPath], {
+      timeout: 120000
+    });
+  } catch {
+    throw new Error('LibreOffice (soffice) is required for DOCX->PDF conversion');
   }
-
-  return { buffer: src, count };
 }
 
-function toUtf16BeBytes(text) {
-  const le = Buffer.from(text, 'utf16le');
-  const be = Buffer.alloc(le.length);
-  for (let i = 0; i < le.length; i += 2) {
-    be[i] = le[i + 1];
-    be[i + 1] = le[i];
-  }
-  return be;
-}
+async function fillTemplateDocx(templateBuffer, trailer) {
+  const zip = await JSZip.loadAsync(templateBuffer);
+  const xmlTargets = Object.keys(zip.files).filter((name) =>
+    name === 'word/document.xml' ||
+    /^word\/header\d+\.xml$/.test(name) ||
+    /^word\/footer\d+\.xml$/.test(name)
+  );
 
-function replaceAllUtf16Be(buffer, needle, replacement) {
-  const src = Buffer.from(buffer);
-  const find = toUtf16BeBytes(needle);
-  const out = toUtf16BeBytes(replacement);
-  let count = 0;
-  let pos = 0;
+  let replacedCount = 0;
 
-  while (pos <= src.length - find.length) {
-    const idx = src.indexOf(find, pos);
-    if (idx === -1) break;
-    const slotLen = find.length;
-    const normalized = out.length >= slotLen
-      ? out.subarray(0, slotLen)
-      : Buffer.concat([out, Buffer.alloc(slotLen - out.length, 0x00)]);
-    normalized.copy(src, idx);
-    count += 1;
-    pos = idx + slotLen;
+  for (const name of xmlTargets) {
+    const file = zip.file(name);
+    if (!file) continue;
+    const xml = await file.async('string');
+    if (!xml.includes(PLACEHOLDER)) continue;
+    const replaced = xml.replaceAll(PLACEHOLDER, trailer);
+    const localCount = xml.split(PLACEHOLDER).length - 1;
+    replacedCount += localCount;
+    zip.file(name, replaced);
   }
 
-  return { buffer: src, count };
+  if (replacedCount === 0) {
+    throw new Error(`Could not find placeholder ${PLACEHOLDER} in BOL_template.docx`);
+  }
+
+  return zip.generateAsync({ type: 'nodebuffer' });
 }
 
 export async function generateBolPdfFiles(trailerNumbers = []) {
@@ -80,24 +70,27 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
       throw new Error('Trailer value must be 1..15 characters without spaces.');
     }
 
-    const asciiAttempt = replaceAllAscii(templateBuffer, PLACEHOLDER, trailer);
-    let resultBuffer = asciiAttempt.buffer;
-    let replaced = asciiAttempt.count;
+    const tempBase = path.join(tmpdir(), `bol_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+    const docxPath = `${tempBase}.docx`;
+    const pdfGeneratedPath = `${tempBase}.pdf`;
+    const pdfOutPath = path.join(tmpdir(), `BOL_${trailer}.pdf`);
 
-    if (replaced === 0) {
-      const utf16Attempt = replaceAllUtf16Be(templateBuffer, PLACEHOLDER, trailer);
-      resultBuffer = utf16Attempt.buffer;
-      replaced = utf16Attempt.count;
+    try {
+      const filledDocx = await fillTemplateDocx(templateBuffer, trailer);
+      await fs.writeFile(docxPath, filledDocx);
+      await convertDocxToPdf(docxPath, tmpdir());
+
+      await fs.rename(pdfGeneratedPath, pdfOutPath).catch(async () => {
+        const maybeName = path.basename(docxPath).replace(/\.docx$/i, '.pdf');
+        const maybePath = path.join(tmpdir(), maybeName);
+        await fs.copyFile(maybePath, pdfOutPath);
+      });
+
+      out.push({ trailer, filePath: pdfOutPath, fileName: `BOL_${trailer}.pdf` });
+    } finally {
+      await fs.rm(docxPath, { force: true }).catch(() => {});
+      await fs.rm(pdfGeneratedPath, { force: true }).catch(() => {});
     }
-
-    if (replaced === 0) {
-      throw new Error(`Could not find placeholder ${PLACEHOLDER} in BOL_template.pdf`);
-    }
-
-    const fileName = `BOL_${trailer}.pdf`;
-    const filePath = path.join('/tmp', fileName);
-    await fs.writeFile(filePath, resultBuffer);
-    out.push({ trailer, filePath, fileName });
   }
 
   return out;
