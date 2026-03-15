@@ -485,10 +485,10 @@ async function handleStateInput(bot, msg, lang) {
     const trailers = String(text)
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^[0-9]+$/.test(line));
+      .filter((line) => /^\d{6}$/.test(line));
 
     if (!trailers.length) {
-      await bot.sendMessage(chatId, 'No valid numbers found. Send one or multiple trailer numbers (one per line).');
+      await bot.sendMessage(chatId, 'No valid numbers found. Send 6-digit trailer number(s), one per line.');
       return true;
     }
 
