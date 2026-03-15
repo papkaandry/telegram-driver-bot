@@ -35,6 +35,26 @@ async function cloudConvertRequest(apiKey, endpoint, options = {}) {
   return payload;
 }
 
+function taskListFromJob(job) {
+  if (!job?.tasks) return [];
+  return Array.isArray(job.tasks) ? job.tasks : Object.values(job.tasks);
+}
+
+async function waitForTaskForm(apiKey, taskId) {
+  const timeoutMs = 60000;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const taskResp = await cloudConvertRequest(apiKey, `/tasks/${taskId}`);
+    const task = taskResp?.data;
+    if (task?.status === 'error') throw new Error('CloudConvert import task failed');
+    if (task?.result?.form?.url && task?.result?.form?.parameters) return task.result.form;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error('CloudConvert import form timeout');
+}
+
 async function waitForJobFinished(apiKey, jobId) {
   const timeoutMs = 120000;
   const started = Date.now();
@@ -76,11 +96,12 @@ async function convertDocxToPdfCloudConvert(docxBuffer, inputName) {
   });
 
   const job = created?.data;
-  const importTask = Object.values(job?.tasks || {}).find((task) => task.name === 'import-docx');
-  const form = importTask?.result?.form;
-  if (!form?.url || !form?.parameters) {
-    throw new Error('CloudConvert upload form not returned');
-  }
+  const importTask = taskListFromJob(job).find((task) => task.name === 'import-docx');
+  if (!importTask?.id) throw new Error('CloudConvert import task not found');
+
+  const form = importTask?.result?.form?.url
+    ? importTask.result.form
+    : await waitForTaskForm(apiKey, importTask.id);
 
   const uploadForm = new FormData();
   for (const [key, value] of Object.entries(form.parameters)) {
@@ -97,7 +118,7 @@ async function convertDocxToPdfCloudConvert(docxBuffer, inputName) {
   }
 
   const finishedJob = await waitForJobFinished(apiKey, job.id);
-  const exportTask = Object.values(finishedJob.tasks || {}).find((task) => task.name === 'export-pdf');
+  const exportTask = taskListFromJob(finishedJob).find((task) => task.name === 'export-pdf');
   const downloadUrl = exportTask?.result?.files?.[0]?.url;
   if (!downloadUrl) {
     throw new Error('CloudConvert export URL not found');
