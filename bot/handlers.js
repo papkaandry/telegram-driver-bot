@@ -497,6 +497,9 @@ async function handleStateInput(bot, msg, lang) {
       for (const file of files) {
         await bot.sendDocument(chatId, file.filePath, {}, { filename: file.fileName });
       }
+      if (files.some((file) => !file.replaced)) {
+        await bot.sendMessage(chatId, '⚠️ Files were generated, but placeholder markers were not detected in template for one or more files.');
+      }
     } catch (error) {
       console.error('[BOL] generation failed:', error);
       await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check that BOL_template.pdf contains {{TRA}} (or 563343) markers and try again.');

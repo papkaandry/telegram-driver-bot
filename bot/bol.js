@@ -212,10 +212,6 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
       }
     }
 
-    if (replaced === 0) {
-      throw new Error(`Could not find placeholders (${PLACEHOLDERS.join(', ')}) in BOL_template.pdf`);
-    }
-
     const fileName = `BOL_${trailer}.pdf`;
     const filePath = path.join('/tmp', fileName);
     await fs.writeFile(filePath, resultBuffer);
