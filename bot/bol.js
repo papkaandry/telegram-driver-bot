@@ -3,19 +3,19 @@ import path from 'path';
 import zlib from 'zlib';
 
 const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.pdf');
-const TRAILER_PLACEHOLDER = '{{TRA}}';
+const PLACEHOLDERS = ['{{TRA}}', '563343'];
 
 function sanitizeTrailer(value) {
   return String(value || '').trim();
 }
 
-function replaceInLatin1Text(text, replacementAscii) {
+function replaceInLatin1TextByPlaceholder(text, placeholder, replacementAscii) {
   let count = 0;
   const out = [];
   let pos = 0;
 
   while (pos < text.length) {
-    const idx = text.indexOf(TRAILER_PLACEHOLDER, pos);
+    const idx = text.indexOf(placeholder, pos);
     if (idx === -1) {
       out.push(text.slice(pos));
       break;
@@ -23,7 +23,7 @@ function replaceInLatin1Text(text, replacementAscii) {
 
     out.push(text.slice(pos, idx));
 
-    let slotLen = TRAILER_PLACEHOLDER.length;
+    let slotLen = placeholder.length;
     const slotMax = 15;
     while (slotLen < slotMax && idx + slotLen < text.length) {
       const ch = text[idx + slotLen];
@@ -43,7 +43,18 @@ function replaceInLatin1Text(text, replacementAscii) {
   return { text: out.join(''), count };
 }
 
-function replaceAllBufferOccurrences(buffer, needleAscii, replacementAscii) {
+function replaceInLatin1Text(text, replacementAscii) {
+  let total = 0;
+  let current = text;
+  for (const placeholder of PLACEHOLDERS) {
+    const r = replaceInLatin1TextByPlaceholder(current, placeholder, replacementAscii);
+    current = r.text;
+    total += r.count;
+  }
+  return { text: current, count: total };
+}
+
+function replaceAllBufferOccurrencesByPlaceholder(buffer, needleAscii, replacementAscii) {
   const needle = Buffer.from(needleAscii, 'ascii');
   const output = Buffer.from(buffer);
   let count = 0;
@@ -72,6 +83,17 @@ function replaceAllBufferOccurrences(buffer, needleAscii, replacementAscii) {
   }
 
   return { buffer: output, count };
+}
+
+function replaceAllBufferOccurrences(buffer, replacementAscii) {
+  let total = 0;
+  let current = Buffer.from(buffer);
+  for (const placeholder of PLACEHOLDERS) {
+    const r = replaceAllBufferOccurrencesByPlaceholder(current, placeholder, replacementAscii);
+    current = r.buffer;
+    total += r.count;
+  }
+  return { buffer: current, count: total };
 }
 
 function findStreams(buffer) {
@@ -117,7 +139,7 @@ function replaceInCompressedStreams(buffer, replacementAscii) {
     }
 
     const inflatedText = inflated.toString('latin1');
-    if (!inflatedText.includes(TRAILER_PLACEHOLDER)) continue;
+    if (!PLACEHOLDERS.some((p) => inflatedText.includes(p))) continue;
 
     const { text: replacedText, count } = replaceInLatin1Text(inflatedText, replacementAscii);
     if (!count) continue;
@@ -171,7 +193,7 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
     let resultBuffer = Buffer.from(templateBuffer);
     let replaced = 0;
 
-    const direct = replaceAllBufferOccurrences(resultBuffer, TRAILER_PLACEHOLDER, trailer);
+    const direct = replaceAllBufferOccurrences(resultBuffer, trailer);
     resultBuffer = direct.buffer;
     replaced += direct.count;
 
@@ -191,7 +213,7 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
     }
 
     if (replaced === 0) {
-      throw new Error(`Could not find "${TRAILER_PLACEHOLDER}" placeholders in BOL_template.pdf`);
+      throw new Error(`Could not find placeholders (${PLACEHOLDERS.join(', ')}) in BOL_template.pdf`);
     }
 
     const fileName = `BOL_${trailer}.pdf`;
