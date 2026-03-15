@@ -3,7 +3,7 @@ import path from 'path';
 import zlib from 'zlib';
 
 const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.pdf');
-const TRAILER_PLACEHOLDER = '563343';
+const TRAILER_PLACEHOLDER = '{{TRA}}';
 
 function sanitizeTrailer(value) {
   return String(value || '').trim();
@@ -188,6 +188,10 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
         resultBuffer = Buffer.from(fallback.text, 'latin1');
         replaced += fallback.count;
       }
+    }
+
+    if (replaced === 0) {
+      throw new Error(`Could not find "${TRAILER_PLACEHOLDER}" placeholders in BOL_template.pdf`);
     }
 
     const fileName = `BOL_${trailer}.pdf`;

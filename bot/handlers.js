@@ -497,12 +497,9 @@ async function handleStateInput(bot, msg, lang) {
       for (const file of files) {
         await bot.sendDocument(chatId, file.filePath, {}, { filename: file.fileName });
       }
-      if (files.some((f) => !f.replaced)) {
-        await bot.sendMessage(chatId, '⚠️ Placeholder 563343 was not found in template for one or more files. Template copy was sent without replacement.');
-      }
     } catch (error) {
       console.error('[BOL] generation failed:', error);
-      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check template and try again.');
+      await bot.sendMessage(chatId, '❌ Failed to generate BOL PDFs. Please check that BOL_template.pdf contains {{TRA}} markers and try again.');
     }
 
     clearState(telegramId);
