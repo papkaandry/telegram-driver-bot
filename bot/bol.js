@@ -1,27 +1,115 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import JSZip from 'jszip';
 
-const execFileAsync = promisify(execFile);
 const TEMPLATE_PATH = path.resolve(process.cwd(), 'BOL_template.docx');
 const PLACEHOLDER = '{{TRA}}';
+const CLOUDCONVERT_API = 'https://api.cloudconvert.com/v2';
 
 function sanitizeTrailer(value) {
   return String(value || '').trim();
 }
 
-async function convertDocxToPdf(inputDocxPath, outputDir) {
-  const binary = process.platform === 'win32' ? 'soffice.exe' : 'soffice';
-  try {
-    await execFileAsync(binary, ['--headless', '--convert-to', 'pdf', '--outdir', outputDir, inputDocxPath], {
-      timeout: 120000
-    });
-  } catch {
-    throw new Error('LibreOffice (soffice) is required for DOCX->PDF conversion');
+function getCloudConvertKey() {
+  const key = process.env.CLOUDCONVERT_API_KEY;
+  if (!key) throw new Error('CLOUDCONVERT_API_KEY is required');
+  return key;
+}
+
+async function cloudConvertRequest(apiKey, endpoint, options = {}) {
+  const response = await fetch(`${CLOUDCONVERT_API}${endpoint}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      ...(options.headers || {})
+    }
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg = payload?.message || `CloudConvert request failed: ${response.status}`;
+    throw new Error(msg);
   }
+
+  return payload;
+}
+
+async function waitForJobFinished(apiKey, jobId) {
+  const timeoutMs = 120000;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const jobResp = await cloudConvertRequest(apiKey, `/jobs/${jobId}`);
+    const job = jobResp?.data;
+    if (job?.status === 'finished') return job;
+    if (job?.status === 'error') throw new Error('CloudConvert job failed');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  throw new Error('CloudConvert job timeout');
+}
+
+async function convertDocxToPdfCloudConvert(docxBuffer, inputName) {
+  const apiKey = getCloudConvertKey();
+
+  const createJobPayload = {
+    tasks: {
+      'import-docx': { operation: 'import/upload' },
+      'convert-to-pdf': {
+        operation: 'convert',
+        input: 'import-docx',
+        input_format: 'docx',
+        output_format: 'pdf'
+      },
+      'export-pdf': {
+        operation: 'export/url',
+        input: 'convert-to-pdf'
+      }
+    }
+  };
+
+  const created = await cloudConvertRequest(apiKey, '/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createJobPayload)
+  });
+
+  const job = created?.data;
+  const importTask = Object.values(job?.tasks || {}).find((task) => task.name === 'import-docx');
+  const form = importTask?.result?.form;
+  if (!form?.url || !form?.parameters) {
+    throw new Error('CloudConvert upload form not returned');
+  }
+
+  const uploadForm = new FormData();
+  for (const [key, value] of Object.entries(form.parameters)) {
+    uploadForm.append(key, String(value));
+  }
+  uploadForm.append('file', new Blob([docxBuffer]), inputName);
+
+  const uploadRes = await fetch(form.url, {
+    method: 'POST',
+    body: uploadForm
+  });
+  if (!uploadRes.ok) {
+    throw new Error(`CloudConvert upload failed: ${uploadRes.status}`);
+  }
+
+  const finishedJob = await waitForJobFinished(apiKey, job.id);
+  const exportTask = Object.values(finishedJob.tasks || {}).find((task) => task.name === 'export-pdf');
+  const downloadUrl = exportTask?.result?.files?.[0]?.url;
+  if (!downloadUrl) {
+    throw new Error('CloudConvert export URL not found');
+  }
+
+  const pdfRes = await fetch(downloadUrl);
+  if (!pdfRes.ok) {
+    throw new Error(`CloudConvert PDF download failed: ${pdfRes.status}`);
+  }
+
+  const pdfArrayBuffer = await pdfRes.arrayBuffer();
+  return Buffer.from(pdfArrayBuffer);
 }
 
 async function fillTemplateDocx(templateBuffer, trailer) {
@@ -70,26 +158,20 @@ export async function generateBolPdfFiles(trailerNumbers = []) {
       throw new Error('Trailer value must be 1..15 characters without spaces.');
     }
 
-    const tempBase = path.join(tmpdir(), `bol_${Date.now()}_${Math.random().toString(16).slice(2)}`);
-    const docxPath = `${tempBase}.docx`;
-    const pdfGeneratedPath = `${tempBase}.pdf`;
+    const tempDocxPath = path.join(tmpdir(), `BOL_${trailer}_${Date.now()}.docx`);
     const pdfOutPath = path.join(tmpdir(), `BOL_${trailer}.pdf`);
 
     try {
       const filledDocx = await fillTemplateDocx(templateBuffer, trailer);
-      await fs.writeFile(docxPath, filledDocx);
-      await convertDocxToPdf(docxPath, tmpdir());
+      await fs.writeFile(tempDocxPath, filledDocx);
 
-      await fs.rename(pdfGeneratedPath, pdfOutPath).catch(async () => {
-        const maybeName = path.basename(docxPath).replace(/\.docx$/i, '.pdf');
-        const maybePath = path.join(tmpdir(), maybeName);
-        await fs.copyFile(maybePath, pdfOutPath);
-      });
+      const docxBuffer = await fs.readFile(tempDocxPath);
+      const pdfBuffer = await convertDocxToPdfCloudConvert(docxBuffer, path.basename(tempDocxPath));
+      await fs.writeFile(pdfOutPath, pdfBuffer);
 
       out.push({ trailer, filePath: pdfOutPath, fileName: `BOL_${trailer}.pdf` });
     } finally {
-      await fs.rm(docxPath, { force: true }).catch(() => {});
-      await fs.rm(pdfGeneratedPath, { force: true }).catch(() => {});
+      await fs.rm(tempDocxPath, { force: true }).catch(() => {});
     }
   }
 
